@@ -1,0 +1,9 @@
+.~*
+*.pyc
+EcoOpen.egg-info
+wandb*
+*tests/data/*
+dist/*
+.venv
+
+pypi_uploadingnotes.txt

@@ -91,6 +91,7 @@ def FindPapers(query="", doi="", author="", number_of_papers=200,
     
     filtered_search = search.filter(has_doi=True)
     if only_oa:
+        print("Searching only for open access articles")
         filtered_search = filtered_search.filter(is_oa=True)
     filtered_search = filtered_search.filter(
                 from_publication_date=str(start_year)+"-01-01",
@@ -157,7 +158,7 @@ def fill_dataframe(paper, dataframe):
         dataframe["has_fulltext"].append("")
         
     try:
-        dataframe["is_oa"].append(paper["primary_location"]["is_oa"])
+        dataframe["is_oa"].append(paper["open_access"]["is_oa"])
     except KeyError:
         dataframe["is_oa"].append("")
 
@@ -198,20 +199,22 @@ def find_dataKW(path):
     
     sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', raw)
     # print(sentences, "!!!")
+    # print(sentences, "!!!")
     das_sentences = find_das(sentences)
     keyword_sentences = find_keywords(sentences)
 
     # detect links in the sentences
     data_links = []
     for sentence in keyword_sentences:
-        link = re.findall(r'(https?://\S+)', sentence)
-        # print(link)
+        link = re.findall(r'(https?://[^\s]+)', sentence)
+        # print(link, "!!!")
         if link != []:
             data_links.append(link)
     
     # clean the links
     dl = []
     for i in data_links:
+        print(i)
         for j in i:
             # split merged links
             if len(j.split("http")) > 2:
@@ -222,7 +225,10 @@ def find_dataKW(path):
             else:
                 if j not in dl:
                     dl.append(j)
+                    
+        # print(i)
     # clean special non standard url characters
+
     dl = [i.replace(")", "").replace("]", "").replace("}", "") for i in dl]
     dl = [i.replace("(", "").replace("[", "").replace("{", "") for i in dl]
     dl = [i.replace(";", "").replace(",", "") for i in dl]
@@ -293,12 +299,15 @@ def FindOpenData(files, method="web"):
 
     print(f"Finding open data:")
     data_links = []
+    
+    das_s = []
 
     if method == "keywords":
         for i in tqdm(files["path"].tolist()):
             try:
                 das, dl = find_dataKW(i)
                 data_links.append(dl)
+                das_s.append(das)
             except FileNotFoundError:
                 data_links.append([])
     elif method == "web":
@@ -309,6 +318,7 @@ def FindOpenData(files, method="web"):
         raise ValueError("Method not recognized, use keywords or web!")
 
     files["data_links"+f"_{method}"] = data_links
+    files["data_availability_statements"] = das_s
 
     return files
 

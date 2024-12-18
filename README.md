@@ -16,3 +16,14 @@ The given roadmap is a rough outline of the project's development. It is subject
 - [ ] Stable-ish Python version
 - [ ] Stable-ish R version
 - [ ] GUI
+
+
+## Usage
+
+The package is designed to be easy to use:
+
+### 1. Paper search
+
+```Python
+
+```

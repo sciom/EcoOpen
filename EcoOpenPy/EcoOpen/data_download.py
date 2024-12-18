@@ -43,15 +43,10 @@ for i in filetypes:
     exclude.append(i.lower()+".")
 
 def find_data_web(doi):
-    
     url = "https://doi.org/" + doi
-    #print(url)
     s = HTMLSession()
     r = s.get(url)
-    # r.html.render()
-    
     real_url = r.url
-    
     domain = real_url.split('/')[2]
     soup = BeautifulSoup(r.html.html, 'lxml')
     supplementary_files = []
@@ -72,52 +67,17 @@ def find_data_web(doi):
     ]
     
     if any(snippet in str(soup).lower() for snippet in closed_article_snippets):
-        # article is not publicly available
-        pass
-        # print("Article is not publicly available!")
-        
-    # print("SEARCHING FOR SUPPLEMENTARY MATERIAL")
-    if any(snippet in str(soup).lower() for snippet in supplementary_snippets):
-        links = soup.find_all('a')  
-        for link in links:
-            try:
-                try:
-                    if any(snippet in link.get('href').lower() for snippet in supplementary_snippets):
-                        # print(link.get('href'))
-                        supplementary_files.append(link.get('href'))
-                        
-                    if any(repo in link.get('href').lower() for repo in repos):
-                        # print(link.get('href'))
-                        supplementary_files.append(link.get('href'))
-                except AttributeError:
-                    pass
-            except TypeError:
-                pass
+        return supplementary_files
     
-    # print("SEARCHING FOR DATA REPOSITORIES")
-    for repo in repos:
-        # print("searching for", repo)
-        links = soup.find_all("a", href=True)
-        for link in links:
-            try:
-                if repo in link.get('href').lower():
-                    # print(link.get('href'))
-                    supplementary_files.append(link.get('href'))
-            except TypeError:
-                pass
-
-    # if http not in link, add domain
-    new_links = []
-    for i in supplementary_files:
-        if "http" not in i:
-            i = "https://"+domain + i
-            
-            new_links.append(i)
-        else:
-            new_links.append(i)
-    return new_links
-
+    links = soup.find_all('a', href=True)
+    for link in links:
+        href = link.get('href').lower()
+        if any(snippet in href for snippet in supplementary_snippets) or any(repo in href for repo in repos):
+            if "http" not in href:
+                href = "https://" + domain + href
+            supplementary_files.append(href)
     
+    return supplementary_files
 
 def download_file(url, output_dir):
     response = requests.get(url)
@@ -194,7 +154,7 @@ def get_data_from_link(link, output_dir="examples/data"):
         try:
             s = HTMLSession()
             
-            r = s.get(link)
+            r = s.get(link, timeout=5)
             if r.headers["Content-Type"] != "text/html" or r.headers["Content-Type"] == "application/x-Research-Info-Systems":
                 # print(r.headers["Content-Type"])
                 filename = ""
@@ -321,6 +281,14 @@ def get_data_from_link(link, output_dir="examples/data"):
     else:
         return []
 
+def delete_empty_folders(root):
+    """Function to delete empty folders in a directory tree."""
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        for dirname in dirnames:
+            full_path = os.path.join(dirpath, dirname)
+            if not os.listdir(full_path): 
+                os.rmdir(full_path)
+
 def DownloadData(data_report, output_dir):
     print("")
     print("Attempting to download open data from the web.")
@@ -331,26 +299,26 @@ def DownloadData(data_report, output_dir):
 
     data_dirs = []
     number_of_files = []
+    formats_s = []
     progress = tqdm(total=len(data_report))
     for idx, row in data_report.iterrows():
+        
         data_amount = 0
         data_dir = ""
-        # print(row)
         links = []
         for i in ["data_links_keywords", "data_links_web"]:
             try:
-                links = links+row[i]
+                links += eval(row[i]) if isinstance(row[i], str) else row[i]
             except KeyError:
                 pass
             except TypeError:
                 pass
-        print(links)
-
         title = row["title"]
-        # replace all special characters with underscores
         title = "".join([i if i.isalnum() else "_" for i in title])
         data_dir = Path(os.path.expanduser(str(output_dir)+"/"+title))
 
+        if len(str(data_dir)) > 30:
+            data_dir = Path(str(data_dir)[:50])
         data_dirs.append(str(data_dir))
         os.makedirs(data_dir, exist_ok=True)
 
@@ -358,14 +326,15 @@ def DownloadData(data_report, output_dir):
             for i in links:
                 print("Downloading data from", i)
                 get_data_from_link(i, data_dir)
-        # count downloaded files
+        formats = []
         for root, dirs, files in os.walk(data_dir):
             for file in files:
                 data_amount += 1
+                formats.append(file.split(".")[-1])
 
         number_of_files.append(data_amount)
         progress.update(1)
-    # for every dir in data_dirs check if it is empty and remove it
+        formats_s.append(formats)
     new_data_dirs = []
     for i in data_dirs:
         try:
@@ -377,28 +346,15 @@ def DownloadData(data_report, output_dir):
         except FileNotFoundError:
             new_data_dirs.append(i)
             
-        # if len(os.listdir(i)) == 0:
-        #     os.rmdir(i)
-        #     new_data_dirs.append("")
-        # else:
-        #     new_data_dirs.append(i)
-            
     delete_empty_folders(output_dir)
 
     data_report["data_dir"] = new_data_dirs
     data_report["number_of_files"] = number_of_files
+    data_report["formats"] = formats_s
 
     print("Download attempt complete.")
 
     return data_report
-
-def delete_empty_folders(root):
-   for dirpath, dirnames, filenames in os.walk(root, topdown=False):
-      for dirname in dirnames:
-         full_path = os.path.join(dirpath, dirname)
-         if not os.listdir(full_path): 
-            os.rmdir(full_path)
-
 
 if __name__ == '__main__':
     doi = "10.1016/j.tpb.2012.08.002"
@@ -407,4 +363,3 @@ if __name__ == '__main__':
     links = find_data_web(doi)
     
     data = get_data_from_link(links[0], "~/Documents/pp")
-    

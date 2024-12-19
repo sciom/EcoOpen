@@ -121,7 +121,7 @@ def download_osf_file(url, output_dir, file_name):
         return None
 
 def get_data_from_link(link, output_dir="examples/data"):
-    # print(link, "!!")
+    print(link, "!!")
     
     # There can be three types of links
     # 1. repository links
@@ -182,6 +182,7 @@ def get_data_from_link(link, output_dir="examples/data"):
             pass
         except requests.exceptions.RequestException as e:
             print(f'RequestException: {e}')
+            return []
             
         if "osf.io" in link:
             # print(link.split("/")[-2])

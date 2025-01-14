@@ -30,7 +30,7 @@ pip install ecoopen
 - [x] Search for articles in Crossref
 - [x] Download full text of articles
 - [x] Extract text from articles
-- [x]Find open data in articles
+- [x] Find open data in articles
 
 # 
 

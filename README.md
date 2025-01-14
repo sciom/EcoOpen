@@ -4,11 +4,11 @@ Sharing open data alongside publications is becoming increasingly common in ecol
 
 EcoOpen Data Detection Tool is an open-source tool that allows users to search for ecological data in scientific papers. The tool is developed with support by the Croatian Science Foundation (HRZZ) under the project number IP-2022-10-2872.
 
-![HRZZ](documentation/imgs/HRZZ-eng.jpg | width=50%)
+<img src="documentation/imgs/HRZZ-eng.jpg" width="50%">
 
 EcoOpen Data Tool can be extended to other scientific domains and data types and is also designed for integration with LLM based knowledge collection and data extraction tools.
 
-![EcoOpen Data tool integration](documentation/imgs/ecoopen_integration.png | width=50%)
+<img src="documentation/imgs/ecoopen_integration.png" width="50%">
 
 Although the main functionality of the tools is the detection of open data in scientific papers, the tool contains additional functionalities such as:
 

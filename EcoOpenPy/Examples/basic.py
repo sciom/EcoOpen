@@ -5,6 +5,8 @@ papers = FindPapers(
     author="Antica Čulina"
 )
 
-papers = DownloadPapers(papers, "~/ecoopentest")
+papers = DownloadPapers(papers.loc[:], "~/ecoopentest")
 
 data = FindOpenData(papers, method="keywords")
+
+data = DownloadData(data, "~/ecoopentest_data")

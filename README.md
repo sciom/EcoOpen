@@ -42,13 +42,13 @@ The package is designed to be easy to use:
 ```Python
 from ecoopen.core import *
 #1. Search for papers
-papers = search_papers("ecology", 10)
+papers = FindPapers("ecology", 10)
 #2. Download papers
-papers_download = download_papers(papers)
+papers_download = DownloadPapers(papers)
 #3. Extract data
-data = extract_data(papers_download)
+data = FindOpenData(papers_download)
 #4. Download data
-data_download = download_data(data)
+data_download = DownloadData(data)
 
 ```
 

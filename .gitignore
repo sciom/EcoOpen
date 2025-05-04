@@ -1,3 +1,8 @@
 examples/
+downloads
 
 .vscode*
+
+.~lock.*
+
+*.cpython*

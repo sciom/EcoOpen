@@ -1,12 +1,14 @@
 import pandas as pd
 import requests
-import os
-import logging
 import re
 import time
+import random
 from tqdm import tqdm
 from pyalex import Works
 from urllib.parse import quote
+import fitz  # PyMuPDF for PDF text extraction
+import io
+import logging
 
 # Configuration
 UNPAYWALL_EMAIL = "domagojhack@gmail.com"
@@ -18,7 +20,6 @@ logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format="%(asctime)s -
 
 def validate_doi(doi):
     """Validate DOI format using regex."""
-    # Regex for DOI: starts with '10.', followed by numbers and optional characters
     doi_pattern = r'^10\.\d{4,9}/[-._;()/:A-Za-z0-9]+$'
     try:
         return bool(re.match(doi_pattern, doi))
@@ -28,8 +29,7 @@ def validate_doi(doi):
 
 def create_download_dir():
     """Create download directory if it doesn't exist."""
-    if not os.path.exists(DOWNLOAD_DIR):
-        os.makedirs(DOWNLOAD_DIR)
+    pass  # No-op for Pyodide compatibility (no local file system)
 
 def get_unpaywall_data(doi):
     """Query Unpaywall for open-access status and full-text URL."""
@@ -39,17 +39,25 @@ def get_unpaywall_data(doi):
         response.raise_for_status()
         data = response.json()
         is_oa = data.get("is_oa", False)
-        # Check all OA locations for a URL
         fulltext_urls = []
         oa_locations = data.get("oa_locations", [])
         if is_oa and oa_locations:
+            repo_urls = []
+            publisher_urls = []
             for location in oa_locations:
+                url_to_add = None
                 if location.get("url_for_pdf"):
-                    fulltext_urls.append(location["url_for_pdf"])
+                    url_to_add = location["url_for_pdf"]
                 elif location.get("url_for_landing_page"):
-                    fulltext_urls.append(location["url_for_landing_page"])
+                    url_to_add = location["url_for_landing_page"]
                 elif location.get("url"):
-                    fulltext_urls.append(location["url"])
+                    url_to_add = location["url"]
+                if url_to_add:
+                    if location.get("host_type") == "repository":
+                        repo_urls.append(url_to_add)
+                    else:
+                        publisher_urls.append(url_to_add)
+            fulltext_urls = repo_urls + publisher_urls
         has_fulltext = bool(fulltext_urls)
         logging.info(f"Unpaywall for DOI {doi}: is_oa={is_oa}, has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}, oa_locations={oa_locations}")
         return is_oa, has_fulltext, fulltext_urls
@@ -68,7 +76,6 @@ def get_openalex_data(doi):
             published = work.get("publication_date", "")
             journal = work.get("host_venue", {}).get("display_name", "")
             url = work.get("host_venue", {}).get("url", "")
-            # Get potential PDF URL from OpenAlex
             pdf_url = work.get("open_access", {}).get("oa_url", None)
             logging.info(f"OpenAlex for DOI {doi}: pdf_url={pdf_url}, landing_page_url={url}")
             return title, authors, published, journal, url, pdf_url
@@ -77,11 +84,36 @@ def get_openalex_data(doi):
         logging.error(f"OpenAlex error for DOI {doi}: {str(e)}")
         return "", "", "", "", "", None
 
+def find_pdf_url_from_landing_page(url, session):
+    """Attempt to find a PDF URL by scraping the landing page."""
+    try:
+        response = session.get(url, timeout=15, allow_redirects=True)
+        response.raise_for_status()
+        if "text/html" in response.headers.get("content-type", "").lower():
+            soup = BeautifulSoup(response.text, "html.parser")
+            pdf_links = soup.find_all("a", href=re.compile(r"\.pdf$", re.I))
+            for link in pdf_links:
+                href = link.get("href")
+                if href:
+                    if href.startswith("http"):
+                        return href
+                    from urllib.parse import urljoin
+                    return urljoin(url, href)
+        return None
+    except Exception as e:
+        logging.error(f"Error scraping PDF URL from landing page {url}: {str(e)}")
+        return None
+
 def download_pdf(doi, urls):
-    """Download PDF from a list of URLs and save locally with retries and session."""
+    """Download PDF from a list of URLs and return binary content."""
     session = requests.Session()
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    ]
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": random.choice(user_agents),
         "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
         "Referer": "https://www.google.com/",
@@ -90,25 +122,23 @@ def download_pdf(doi, urls):
     }
     session.headers.update(headers)
     safe_doi = quote(doi, safe="")
-    file_path = os.path.join(DOWNLOAD_DIR, f"{safe_doi}.pdf")
     
     for url in urls:
-        for attempt in range(3):  # Retry up to 3 times
+        for attempt in range(3):
             try:
                 if not url or not url.startswith(('http://', 'https://')):
                     logging.error(f"Invalid or missing URL for DOI {doi}: {url}")
                     break
                 logging.info(f"Attempt {attempt + 1}/3 for DOI {doi} with URL: {url}")
+                session.headers.update({"User-Agent": random.choice(user_agents)})
                 response = session.get(url, timeout=15, stream=True, allow_redirects=True)
                 if response.status_code == 403:
                     logging.warning(f"403 Forbidden for DOI {doi}, retrying after delay...")
-                    time.sleep(2)  # Wait before retrying
+                    time.sleep(random.uniform(2, 5))
                     continue
                 response.raise_for_status()
-                # Check if the response is a PDF
                 content_type = response.headers.get("content-type", "").lower()
                 if "pdf" not in content_type and "octet-stream" not in content_type:
-                    # Try appending /pdf to the URL if it's a landing page
                     if not url.endswith(".pdf"):
                         new_url = url.rstrip("/") + "/pdf"
                         logging.info(f"URL not a PDF, trying modified URL for DOI {doi}: {new_url}")
@@ -116,40 +146,146 @@ def download_pdf(doi, urls):
                         response.raise_for_status()
                         content_type = response.headers.get("content-type", "").lower()
                         if "pdf" not in content_type and "octet-stream" not in content_type:
-                            logging.warning(f"URL for DOI {doi} does not point to a PDF: {new_url}, Content-Type: {content_type}")
-                            break
-                with open(file_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                logging.info(f"Downloaded PDF for DOI {doi} to {file_path}")
-                return True, file_path
+                            pdf_url = find_pdf_url_from_landing_page(url, session)
+                            if pdf_url:
+                                logging.info(f"Found PDF URL via scraping for DOI {doi}: {pdf_url}")
+                                response = session.get(pdf_url, timeout=15, stream=True, allow_redirects=True)
+                                response.raise_for_status()
+                                content_type = response.headers.get("content-type", "").lower()
+                                if "pdf" not in content_type and "octet-stream" not in content_type:
+                                    logging.warning(f"Scraped URL for DOI {doi} does not point to a PDF: {pdf_url}, Content-Type: {content_type}")
+                                    break
+                            else:
+                                logging.warning(f"No PDF URL found after scraping for DOI {doi}, Content-Type: {content_type}")
+                                break
+                pdf_content = b"".join(response.iter_content(chunk_size=8192))
+                logging.info(f"Downloaded PDF content for DOI {doi} (size: {len(pdf_content)} bytes)")
+                return True, pdf_content
             except Exception as e:
                 logging.error(f"Download error for DOI {doi}: {str(e)} (URL: {url})")
-                if attempt < 2:  # If not the last attempt
-                    time.sleep(2)  # Wait before retrying
+                if attempt < 2:
+                    time.sleep(random.uniform(2, 5))
                 continue
         logging.info(f"All attempts failed for URL: {url}")
-    return False, ""
+    return False, None
 
-def extract_text_from_pdf(file_path):
-    """Placeholder: Extract text from PDF for analysis."""
-    # To be implemented with data availability statement examples
-    return ""
+def extract_text_from_pdf(pdf_content):
+    """Extract text from PDF content (binary string)."""
+    try:
+        if not pdf_content:
+            return ""
+        doc = fitz.open("pdf", pdf_content)
+        text = ""
+        for page in doc:
+            text += page.get_text("text")
+        doc.close()
+        logging.info(f"Extracted text from PDF (length: {len(text)} characters)")
+        return text
+    except Exception as e:
+        logging.error(f"Error extracting text from PDF: {str(e)}")
+        return ""
 
 def analyze_data_availability(text):
-    """Placeholder: Analyze text for data availability statements."""
-    # To be implemented with rule-based extraction
-    return "", []  # Returns statement and list of data links
+    """Analyze text for data availability statements and extract data links."""
+    if not text:
+        return "No text available for analysis.", []
+    
+    # Define patterns for different types of data availability statements
+    patterns = [
+        # Not Available / Restricted
+        (
+            r"(?:authors\s*do\s*not\s*have\s*permission\s*to\s*share\s*data|data\s*(?:is|are)\s*not\s*(?:publicly\s*)?available)",
+            "Not Available"
+        ),
+        # Available Upon Request
+        (
+            r"(?:data|datasets|information|sequences|matrices|questionnaire|results)\s*(?:are|is|can\s*be|will\s*be)?\s*(?:available|made\s*available)\s*(?:upon|on)\s*(?:reasonable\s*)?request(?:\s*from\s*(?:the\s*(?:corresponding|primary)\s*author|authors))?",
+            "Available Upon Request"
+        ),
+        # Available in Repositories
+        (
+            r"(?:data|datasets|sequences|code|scripts|model\s*(?:inputs|outputs))\s*(?:are|is|have\s*been|were)\s*(?:available|openly\s*available|publicly\s*available|archived|stored|deposited|uploaded)\s*(?:at|in|on|through|from|under)\s*(?:[^\s]+\s*(?:at|under)\s*)?(https?://[^\s]+|doi:[^\s]+|Dryad|Zenodo|GitHub|Figshare|NCBI|GBIF)",
+            "Available in Repository"
+        ),
+        # Available in Supplementary Materials
+        (
+            r"(?:data|datasets|sequences|information)\s*(?:are|is)\s*(?:available|included|provided)\s*(?:as|in|within|at)\s*(?:supplementary|supporting|appendix|electronic\s*supplementary\s*material|SI\s*Appendix|Table\s*S\d+|File\s*S\d+)(?:\s*(?:at|online\s*at)\s*(https?://[^\s]+))?",
+            "Available in Supplementary Materials"
+        ),
+        # Available in Databases with Accession Numbers
+        (
+            r"(?:sequences|data)\s*(?:are|have\s*been|were)\s*(?:deposited|available|uploaded)\s*(?:in|at|to)\s*(?:GenBank|NCBI|EMBL|Sequence\s*Read\s*Archive|SRA)\s*(?:database\s*)?(?:with\s*accession\s*numbers?\s*([A-Z0-9\-]+(?:\s*to\s*[A-Z0-9\-]+)?)|under\s*(?:BioProject\s*(?:ID|number)\s*[A-Z0-9]+))?",
+            "Available in Database"
+        ),
+        # Mixed Availability
+        (
+            r"(?:data|datasets)\s*(?:are|is)\s*not\s*publicly\s*available\s*but\s*may\s*be\s*obtained\s*through\s*a\s*formal\s*request(?:\s*to\s*[^\.]+)?\.?\s*(?:All\s*other\s*data\s*(?:are|is)\s*(?:publicly\s*available|available\s*through\s*[^\.]+))?",
+            "Mixed Availability"
+        )
+    ]
+    
+    data_statement = ""
+    data_links = []
+    
+    for pattern, category in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            data_statement = match.group(0).strip()
+            logging.info(f"Data availability match for DOI: Category={category}, Statement={data_statement}")
+            # Extract URLs if present
+            if "https://" in data_statement or "http://" in data_statement or "doi:" in data_statement:
+                urls = re.findall(r"(?:https?://[^\s]+|doi:[^\s]+)", data_statement)
+                data_links.extend(urls)
+            break
+    
+    if not data_statement:
+        data_statement = "No data availability statement found."
+        logging.info(f"No data availability statement found for DOI.")
+    
+    return data_statement, data_links
 
 def analyze_code_availability(text):
-    """Placeholder: Analyze text for code availability statements."""
-    # To be implemented with rule-based extraction
-    return ""  # Returns statement
+    """Analyze text for code availability statements."""
+    if not text:
+        return "No text available for analysis."
+    
+    # Define patterns for different types of code availability statements
+    patterns = [
+        # Available Upon Request
+        (
+            r"(?:code|scripts|model\s*code)\s*(?:are|is|will\s*be)\s*(?:available|made\s*available)\s*(?:upon|on|by)\s*request(?:\s*from\s*(?:the\s*(?:corresponding|primary)\s*author|authors))?",
+            "Available Upon Request"
+        ),
+        # Available in Repositories
+        (
+            r"(?:code|scripts|R\s*code|JAGS\s*code|model\s*code)\s*(?:are|is|have\s*been|were)\s*(?:available|openly\s*available|publicly\s*available|archived|stored|deposited|supporting\s*the\s*[^\s]+)\s*(?:at|in|on|through|from|under)\s*(?:[^\s]+\s*(?:at|under)\s*)?(https?://[^\s]+|doi:[^\s]+|Dryad|Zenodo|GitHub|Figshare)",
+            "Available in Repository"
+        ),
+        # Available in Supplementary Materials
+        (
+            r"(?:code|scripts|R\s*script)\s*(?:are|is)\s*(?:available|included|provided)\s*(?:as|in|within|at)\s*(?:supplementary|supporting|appendix|electronic\s*supplementary\s*material|Table\s*S\d+|Text\s*S\d+)(?:\s*(?:at|online\s*at)\s*(https?://[^\s]+))?",
+            "Available in Supplementary Materials"
+        )
+    ]
+    
+    code_statement = ""
+    
+    for pattern, category in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            code_statement = match.group(0).strip()
+            logging.info(f"Code availability match for DOI: Category={category}, Statement={code_statement}")
+            break
+    
+    if not code_statement:
+        code_statement = "No code availability statement found."
+        logging.info(f"No code availability statement found for DOI.")
+    
+    return code_statement
 
 def analyze_data_metadata(links):
-    """Placeholder: Analyze data links for metadata (format, repository, etc.)."""
-    # To be implemented after data download functionality
-    return {
+    """Analyze metadata of data links (format, repository, etc.)."""
+    metadata = {
         "format": "",
         "repository": "",
         "repository_url": "",
@@ -159,6 +295,60 @@ def analyze_data_metadata(links):
         "number_of_files": 0,
         "license": ""
     }
+    
+    if not links:
+        return metadata
+    
+    # Analyze the first link
+    link = links[0]
+    try:
+        response = requests.head(link, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+        
+        # Extract content type to determine format
+        content_type = response.headers.get("content-type", "").lower()
+        if "csv" in content_type:
+            metadata["format"] = "CSV"
+        elif "json" in content_type:
+            metadata["format"] = "JSON"
+        elif "zip" in content_type:
+            metadata["format"] = "ZIP"
+        else:
+            metadata["format"] = content_type.split("/")[-1] if "/" in content_type else "Unknown"
+        
+        # Estimate data size
+        content_length = response.headers.get("content-length")
+        if content_length:
+            metadata["data_size"] = float(content_length) / 1024  # Convert to KB
+        
+        # Identify repository based on URL
+        if "zenodo.org" in link:
+            metadata["repository"] = "Zenodo"
+            metadata["repository_url"] = "https://zenodo.org"
+        elif "figshare.com" in link:
+            metadata["repository"] = "Figshare"
+            metadata["repository_url"] = "https://figshare.com"
+        elif "github.com" in link:
+            metadata["repository"] = "GitHub"
+            metadata["repository_url"] = "https://github.com"
+        elif "dryad" in link:
+            metadata["repository"] = "Dryad"
+            metadata["repository_url"] = "https://datadryad.org"
+        else:
+            metadata["repository"] = "Unknown"
+            metadata["repository_url"] = link
+        
+        metadata["download_status"] = True
+        metadata["number_of_files"] = 1  # Simplified assumption
+        
+        # Attempt to find license (placeholder)
+        metadata["license"] = "Unknown"
+        
+        logging.info(f"Data metadata for link {link}: {metadata}")
+    except Exception as e:
+        logging.error(f"Error analyzing data metadata for link {link}: {str(e)}")
+    
+    return metadata
 
 def process_dois(doi_list):
     """Process list of DOIs and generate output table."""
@@ -179,24 +369,21 @@ def process_dois(doi_list):
         
         # Download PDF if available
         downloaded = False
-        path = ""
-        # Try Unpaywall URLs first
+        pdf_content = None
         if has_fulltext and fulltext_urls:
             logging.info(f"Attempting to download PDF for DOI {doi} from Unpaywall URLs: {fulltext_urls}")
-            downloaded, path = download_pdf(doi, fulltext_urls)
-        # Fallback to OpenAlex PDF URL if Unpaywall fails
+            downloaded, pdf_content = download_pdf(doi, fulltext_urls)
         if not downloaded and pdf_url:
             logging.info(f"Unpaywall failed or no URL, attempting to download PDF for DOI {doi} from OpenAlex PDF URL: {pdf_url}")
-            downloaded, path = download_pdf(doi, [pdf_url])
-        # Fallback to OpenAlex landing page URL for all articles
+            downloaded, pdf_content = download_pdf(doi, [pdf_url])
         if not downloaded and url:
-            logging.info(f"No PDF URL available, attempting to download PDF for DOI {doi} from OpenAlex landing page URL (may require institutional access): {url}")
-            downloaded, path = download_pdf(doi, [url])
+            logging.info(f"No PDF URL available, attempting to download PDF for DOI {doi} from OpenAlex landing page URL: {url}")
+            downloaded, pdf_content = download_pdf(doi, [url])
         if not downloaded:
             logging.info(f"No download succeeded for DOI {doi}: has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}, openalex_pdf_url={pdf_url}, landing_page_url={url}")
         
-        # Placeholder for text analysis
-        text = extract_text_from_pdf(path) if downloaded else ""
+        # Extract and analyze text
+        text = extract_text_from_pdf(pdf_content) if downloaded else ""
         data_availability, data_links = analyze_data_availability(text)
         code_availability = analyze_code_availability(text)
         data_metadata = analyze_data_metadata(data_links) if data_links else {
@@ -221,7 +408,7 @@ def process_dois(doi_list):
             "has_fulltext": has_fulltext,
             "is_oa": is_oa,
             "downloaded": downloaded,
-            "path": path,
+            "path": "",  # Not applicable in Pyodide
             "data_links": data_links,
             "data_availability_statements": data_availability,
             "code_availability_statements": code_availability,

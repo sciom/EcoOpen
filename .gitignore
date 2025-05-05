@@ -6,3 +6,4 @@ downloads
 .~lock.*
 
 *.cpython*
+__pycache__/

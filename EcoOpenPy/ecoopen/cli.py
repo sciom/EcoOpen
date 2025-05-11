@@ -1,5 +1,5 @@
 import argparse
-from ecoopen.ecoopen import process_and_analyze_dois  # Absolute import
+from EcoOpenPy.ecoopen import process_and_analyze_dois  # Absolute import
 
 def main():
     """Command-line interface for ecoopen package."""

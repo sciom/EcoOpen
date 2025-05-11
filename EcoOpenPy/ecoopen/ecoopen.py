@@ -12,7 +12,7 @@ import logging
 from bs4 import BeautifulSoup
 import os
 import spacy
-from ecoopen.keywords import keywords  # Absolute import
+from EcoOpenPy.keywords import keywords  # Absolute import
 from multiprocessing import Pool
 import threading
 

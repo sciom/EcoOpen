@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ecoopen"
 version = "0.1.0"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" },
+    { name = "Domagoj K. Hackenberger", email = "domagojhack@gmail.com" },
 ]
 description = "A package to process DOIs, download PDFs, and analyze data and code availability statements."
 readme = "README.md"

@@ -9,3 +9,6 @@ downloads
 __pycache__/
 
 *.egg-info/
+
+data_downloads/
+pdf_downloads/

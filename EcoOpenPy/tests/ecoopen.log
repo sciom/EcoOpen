@@ -1,0 +1,157 @@
+2025-05-11 15:28:00,069 - INFO - Unpaywall for DOI 10.3390/ecologies2030017: is_oa=True, has_fulltext=True, fulltext_urls=['https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696'], oa_locations=[{'updated': '2025-05-11T13:27:59.952026', 'url': 'https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696', 'url_for_pdf': 'https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696', 'url_for_landing_page': 'https://doi.org/10.3390/ecologies2030017', 'evidence': 'oa journal (via doaj)', 'license': 'cc-by', 'version': 'publishedVersion', 'host_type': 'publisher', 'is_best': True, 'pmh_id': None, 'endpoint_id': None, 'repository_institution': None, 'oa_date': '2021-08-10'}]
+2025-05-11 15:28:00,069 - INFO - DOI 10.3390/ecologies2030017: is_oa=True, has_fulltext=True, fulltext_urls=['https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696']
+2025-05-11 15:28:00,611 - INFO - OpenAlex for DOI 10.3390/ecologies2030017: pdf_url=https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696, landing_page_url=
+2025-05-11 15:28:00,611 - INFO - Attempting to download PDF for DOI 10.3390/ecologies2030017 from Unpaywall URLs: ['https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696']
+2025-05-11 15:28:00,744 - WARNING - Failed to visit landing page for DOI 10.3390/ecologies2030017: https://www.mdpi.com/2673-4133/2/3/17, Error: 403 Client Error: Forbidden for url: https://www.mdpi.com/2673-4133/2/3/17
+2025-05-11 15:28:00,744 - INFO - Attempt 1/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:00,856 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:00 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:00 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970080807_1600460566_1757483539_11_4499_13_18_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970080.68c11213'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970080&#46;68c11213
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970080&#46;68c11213</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:04,793 - INFO - Attempt 2/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:04,940 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:04 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:04 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970084893_1600460709_942331915_19_4602_13_18_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.a517655f.1746970084.382ad80b'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;a517655f&#46;1746970084&#46;382ad80b
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;a517655f&#46;1746970084&#46;382ad80b</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:08,622 - INFO - Attempt 3/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:08,725 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:08 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:08 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970088680_1600460566_1757499369_10_3844_11_17_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970088.68c14fe9'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970088&#46;68c14fe9
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970088&#46;68c14fe9</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:12,648 - INFO - All attempts failed for URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:12,648 - INFO - Attempt 1/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:12,755 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:12 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:12 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970092712_1600460709_942336551_13_5209_10_16_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.a517655f.1746970092.382aea27'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;a517655f&#46;1746970092&#46;382aea27
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;a517655f&#46;1746970092&#46;382aea27</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:18,192 - INFO - Attempt 2/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:18,278 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:18 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:18 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970098233_1600460566_1757518965_11_5031_10_16_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970098.68c19c75'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970098&#46;68c19c75
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970098&#46;68c19c75</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:23,651 - INFO - Attempt 3/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:23,876 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:23 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:23 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970103827_1600460566_1757530662_10_4250_11_31_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970103.68c1ca26'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970103&#46;68c1ca26
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970103&#46;68c1ca26</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:27,720 - INFO - All attempts failed for URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:27,720 - INFO - Unpaywall failed or no URL, attempting to download PDF for DOI 10.3390/ecologies2030017 from OpenAlex PDF URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:27,860 - WARNING - Failed to visit landing page for DOI 10.3390/ecologies2030017: https://www.mdpi.com/2673-4133/2/3/17, Error: 403 Client Error: Forbidden for url: https://www.mdpi.com/2673-4133/2/3/17
+2025-05-11 15:28:27,860 - INFO - Attempt 1/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:27,925 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:27 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:27 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970107881_1600460566_1757538711_61_3571_10_24_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970107.68c1e997'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970107&#46;68c1e997
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970107&#46;68c1e997</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:33,321 - INFO - Attempt 2/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:33,414 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:33 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:33 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970113372_1600460709_942351416_106_6133_10_14_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.a517655f.1746970113.382b2438'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;a517655f&#46;1746970113&#46;382b2438
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;a517655f&#46;1746970113&#46;382b2438</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:37,583 - INFO - Attempt 3/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:37,691 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '411', 'Expires': 'Sun, 11 May 2025 13:28:37 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:37 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970117647_1600460709_942354440_13_4733_12_17_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.a517655f.1746970117.382b3008'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf&#63;" on this server.<P>
+Reference&#32;&#35;18&#46;a517655f&#46;1746970117&#46;382b3008
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;a517655f&#46;1746970117&#46;382b3008</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:42,511 - INFO - All attempts failed for URL: https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696
+2025-05-11 15:28:42,511 - INFO - Attempt 1/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:42,584 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:42 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:42 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970122543_1600460709_942358122_11_5097_10_15_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.a517655f.1746970122.382b3e6a'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;a517655f&#46;1746970122&#46;382b3e6a
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;a517655f&#46;1746970122&#46;382b3e6a</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:47,625 - INFO - Attempt 2/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:47,893 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:47 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:47 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970127843_1600460566_1757579392_12_4265_13_19_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970127.68c28880'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970127&#46;68c28880
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970127&#46;68c28880</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:51,649 - INFO - Attempt 3/3 for DOI 10.3390/ecologies2030017 with URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:51,741 - WARNING - 403 Forbidden for DOI 10.3390/ecologies2030017, Response Headers: {'Mime-Version': '1.0', 'Content-Type': 'text/html', 'Content-Length': '406', 'Expires': 'Sun, 11 May 2025 13:28:51 GMT', 'Cache-Control': 'max-age=0, no-cache, no-store', 'Pragma': 'no-cache', 'Date': 'Sun, 11 May 2025 13:28:51 GMT', 'Connection': 'close', 'Server-Timing': 'cdn-cache; desc=HIT, edge; dur=1, ak_p; desc="1746970131693_1600460566_1757587036_12_4074_10_21_-";dur=1', 'Strict-Transport-Security': 'max-age=31536000', 'Akamai-GRN': '0.1617655f.1746970131.68c2a65c'}, Content: <HTML><HEAD>
+<TITLE>Access Denied</TITLE>
+</HEAD><BODY>
+<H1>Access Denied</H1>
+ 
+You don't have permission to access "http&#58;&#47;&#47;www&#46;mdpi&#46;com&#47;2673&#45;4133&#47;2&#47;3&#47;17&#47;pdf" on this server.<P>
+Reference&#32;&#35;18&#46;1617655f&#46;1746970131&#46;68c2a65c
+<P>https&#58;&#47;&#47;errors&#46;edgesuite&#46;net&#47;18&#46;1617655f&#46;1746970131&#46;68c2a65c</P>
+</BODY>
+</HTML>
+...
+2025-05-11 15:28:56,047 - INFO - All attempts failed for URL: https://www.mdpi.com/2673-4133/2/3/17/pdf
+2025-05-11 15:28:56,047 - INFO - No download succeeded for DOI 10.3390/ecologies2030017: has_fulltext=True, fulltext_urls=['https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696'], openalex_pdf_url=https://www.mdpi.com/2673-4133/2/3/17/pdf?version=1628580696, landing_page_url=
+2025-05-11 15:28:56,060 - INFO - Output saved to ecoopen_output.csv

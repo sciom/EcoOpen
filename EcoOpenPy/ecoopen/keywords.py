@@ -134,4 +134,10 @@ keywords = {
         r"[A-Z]{1,2}_[0-9]{5,8}",     # Format with underscore (e.g., NC_123456)
         r"[A-Z]{3}[0-9]{5,}",         # Another format (e.g., GEO12345)
     ],
+    "code_availability": [
+        "Code Availability",
+        "Software Availability",
+        "Availability of Code",
+        "Supporting Information",
+    ],
 }

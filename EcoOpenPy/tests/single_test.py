@@ -1,6 +1,6 @@
 from ecoopen import process_and_analyze_dois
 dois = [
-"10.1002/ece3.9754"
+"10.1111/2041-210X.12952"
 ]
 
 df = process_and_analyze_dois(
@@ -9,5 +9,5 @@ df = process_and_analyze_dois(
     email="your.email@example.com",
     download_dir="./pdf_downloads",
     data_download_dir="./data_downloads",
-    target_formats=["csv", "xlsx"]
+    # target_formats=["csv", "xlsx"]
 )

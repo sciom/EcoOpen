@@ -1,28 +1,73 @@
 # EcoOpen
 
-EcoOpen is a Python package for processing DOIs to download PDFs, extract text, and analyze data and code availability statements in scientific papers. It can be integrated with paper search APIs like OpenAlex to find DOIs and process the resulting papers, and it supports downloading open data files in specified formats.
+EcoOpen is a Python package designed to process DOIs, download associated PDFs, extract text, and analyze data and code availability statements. It can also download data files from repositories like Dryad, Zenodo, GitHub, and Figshare, using both web scraping and API calls for supported repositories.
+
+## Features
+
+- Validates and processes DOIs to retrieve metadata via Unpaywall and OpenAlex.
+- Downloads PDFs from open-access sources.
+- Extracts text from PDFs using PyMuPDF.
+- Analyzes data and code availability statements using NLP (spaCy).
+- Downloads data files from repositories using web scraping and APIs (e.g., Zenodo, Dryad, Figshare).
+- Outputs results to a CSV file with detailed metadata.
 
 ## Installation
 
-You can install EcoOpen via pip:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/ecoopen.git
+   cd ecoopen
+   ```
 
-```bash
-pip install ecoopen
-```
+2. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   The `requirements.txt` includes:
+   ```
+   pandas
+   requests
+   beautifulsoup4
+   pyalex
+   PyMuPDF
+   tqdm
+   spacy
+   zenodo-client
+   ```
+
+3. Install the spaCy English model:
+   ```bash
+   python -m spacy download en_core_web_sm
+   ```
+
+4. Install the package locally:
+   ```bash
+   pip install -e .
+   ```
 
 ## Usage
 
+### Command-Line Interface (CLI)
+Process a list of DOIs and save the results to a CSV file:
+
+```bash
+ecoopen --dois "10.1111/2041-210X.12952" --save-to-disk --email "your.email@example.com" --download-dir "./pdf_downloads" --data-download-dir "./data_downloads"
+```
+
+Or process DOIs from a CSV file:
+
+```bash
+ecoopen --input-file input_dois.csv --save-to-disk --email "your.email@example.com" --download-dir "./pdf_downloads" --data-download-dir "./data_downloads"
+```
+
 ### As a Library
-
-#### Processing DOIs Directly
-
-You can use `ecoopen` to process a list of DOIs directly:
+You can also use EcoOpen as a Python library:
 
 ```python
-from ecoopen import process_and_analyze_dois, find_dois
+from ecoopen import process_and_analyze_dois
 
-# Process a list of DOIs
-dois = ["10.3390/ecologies2030017", "10.1111/gcb.12963"]
+dois = ["10.1111/2041-210X.12952"]
 df = process_and_analyze_dois(
     dois=dois,
     save_to_disk=True,
@@ -31,178 +76,79 @@ df = process_and_analyze_dois(
     data_download_dir="./data_downloads",
     target_formats=["csv", "xlsx"]
 )
-print(df[["identifier", "doi", "title", "data_availability_statements", "all_data_availability_statements", "code_availability_statements", "all_code_availability_statements", "downloaded_data_files"]])
-```
-
-#### Finding DOIs in a Directory of PDFs
-
-You can also use `ecoopen` to find DOIs in a directory of PDFs:
-
-```python
-# Find DOIs in a directory of PDFs
-dois, doi_file_mapping = find_dois("./downloads")
-print(f"Found DOIs: {dois}")
-```
-
-#### Downloading Open Data
-
-EcoOpen can search for and download open data files mentioned in papers or linked from landing pages. By default, it targets common spreadsheet and delimited formats (`csv`, `tsv`, `txt`, `xlsx`, `xls`), but you can specify your own formats:
-
-```python
-from ecoopen import process_and_analyze_dois
-
-# Process DOIs and download data files in specified formats
-dois = ["10.3390/ecologies2030017"]
-df = process_and_analyze_dois(
-    dois=dois,
-    save_to_disk=True,
-    email="your.email@example.com",
-    target_formats=["csv", "xlsx"],  # Only download CSV and Excel files
-    data_download_dir="./my_data_downloads"
-)
 print(df[["identifier", "doi", "title", "data_links", "downloaded_data_files"]])
 ```
 
-#### File Naming Convention
+## Setting Up the Zenodo API
 
-EcoOpen uses a structured naming convention for downloaded PDFs and data files to make them easier to reference and search:
+EcoOpen uses the Zenodo API to fetch downloadable files from Zenodo repositories, which is more reliable than web scraping. To enable this feature, you need to set up a Zenodo API token:
 
-- **PDF Files**: `<identifier>_<sanitized_doi>_<sanitized_title>.pdf`
-  - `identifier`: A sequential number (e.g., `001`, `002`) assigned to each DOI.
-  - `sanitized_doi`: The DOI with backslashes replaced by underscores (e.g., `10.3390_ecologies2030017`).
-  - `sanitized_title`: A sanitized version of the paper title (e.g., `Ecology_Study_2020`).
+1. **Obtain a Zenodo API Token**:
+   - Go to [Zenodo](https://zenodo.org) and sign in (or create an account).
+   - Navigate to "Applications" > "Personal Access Tokens" in your user settings.
+   - Generate a new token with the scope `deposit:write` (though for downloading, read-only access is sufficient).
+   - Copy the generated token.
 
-- **Data Files**: `<identifier>_<sanitized_doi>_<sanitized_title>_<original_filename>`
-  - `original_filename`: The original filename of the data file, preserving its extension.
-
-For example, for the DOI `10.3390/ecologies2030017` with the title "Ecology Study 2020" and identifier `001`, the files might be named:
-- PDF: `001_10.3390_ecologies2030017_Ecology_Study_2020.pdf`
-- Data file: `001_10.3390_ecologies2030017_Ecology_Study_2020_dataset.csv`
-
-#### Data and Code Availability Detection
-
-EcoOpen analyzes the full text of papers to detect data and code availability statements. The detection algorithm has been enhanced to:
-
-- **Analyze All Statements**: Instead of taking the first matching statement, EcoOpen now collects all potential data and code availability statements in the paper.
-- **Scoring System**: Each statement is scored based on:
-  - **Category Priority**: Statements indicating availability in repositories or supplementary materials are prioritized over "upon request" or "not available".
-  - **Context Relevance**: Statements containing phrases like "this study", "we provide", or "our data/code" are boosted, as they likely refer to the paper's own data or code.
-  - **Keyword Density**: Statements with more relevant keywords (e.g., "data", "code", "available", repository names) receive a higher score.
-  - **Third-Party Detection**: Statements likely referring to third-party data or code (e.g., containing "obtained from", "third-party") are penalized.
-- **Best Match Selection**: The statement with the highest score is selected as the primary data or code availability statement.
-- **All Statements Output**: All detected statements are included in the output for transparency, under the columns `all_data_availability_statements` and `all_code_availability_statements`.
-
-The output DataFrame includes:
-- `data_availability_statements`: The best-matching data availability statement.
-- `all_data_availability_statements`: A list of all detected data availability statements with their categories and scores.
-- `code_availability_statements`: The best-matching code availability statement.
-- `all_code_availability_statements`: A list of all detected code availability statements with their categories and scores.
-
-### Command-Line Interface
-
-EcoOpen provides a CLI for processing DOIs. You must provide an email address for Unpaywall API requests, either via the `--email` argument or by setting the `UNPAYWALL_EMAIL` environment variable.
-
-#### Basic Usage
-
-```bash
-ecoopen --dois "10.3390/ecologies2030017,10.1111/gcb.12963" --save-to-disk --email "your.email@example.com"
-```
-
-Or process DOIs from a CSV file:
-
-```bash
-ecoopen --input-file dois.csv --save-to-disk --email "your.email@example.com"
-```
-
-Alternatively, set the `UNPAYWALL_EMAIL` environment variable:
-
-```bash
-export UNPAYWALL_EMAIL="your.email@example.com"
-ecoopen --dois "10.3390/ecologies2030017,10.1111/gcb.12963" --save-to-disk
-```
-
-#### Downloading Open Data via CLI
-
-You can use the CLI to download open data files in specific formats and save them to a custom directory:
-
-```bash
-ecoopen --dois "10.3390/ecologies2030017" --save-to-disk --email "your.email@example.com" --target-formats "csv,xlsx" --data-download-dir "./my_data_downloads"
-```
-
-### Integrating with Paper Search APIs (OpenAlex)
-
-EcoOpen can be integrated with paper search APIs like [OpenAlex](https://openalex.org/) to search for papers and process their DOIs. OpenAlex is a free catalog of scholarly papers that provides a powerful API for searching papers by title, author, keyword, and more. EcoOpen already uses `pyalex` (a Python client for OpenAlex) as a dependency, so you can easily search for papers and pass the resulting DOIs to `ecoopen` for processing.
-
-#### Setting Up OpenAlex
-
-1. **Install `pyalex`**:
-   - The `pyalex` library is already included as a dependency of `ecoopen`, so you don’t need to install it separately if you’ve installed `ecoopen`.
-
-2. **Configure Your Email (Optional but Recommended)**:
-   - OpenAlex recommends providing an email address with API requests to identify the user and provide better support. You can set this via the `pyalex` configuration:
-     ```python
-     import pyalex
-     pyalex.config.email = "your.email@example.com"
+2. **Set the Zenodo API Token as an Environment Variable**:
+   - On Linux/MacOS:
+     ```bash
+     export ZENODO_ACCESS_TOKEN="your_zenodo_token"
      ```
-   - Alternatively, you can pass the email directly when using `ecoopen`, as shown below.
+   - On Windows (Command Prompt):
+     ```cmd
+     set ZENODO_ACCESS_TOKEN=your_zenodo_token
+     ```
+   - Alternatively, you can add the export command to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`) to make it persistent.
 
-#### Example: Search for Papers with OpenAlex and Process with EcoOpen
+3. **Verify the Token**:
+   - Run the EcoOpen command as shown above. If the token is set correctly, EcoOpen will use the Zenodo API to fetch files from Zenodo links. If no token is provided, it will fall back to web scraping, which may be less reliable.
 
-You can search for papers using OpenAlex and then process the resulting DOIs with `ecoopen`. Here’s an example that searches for papers with the keyword "ecology" published in 2020, processes them, and downloads associated data files:
+**Note**: Providing a Zenodo API token allows EcoOpen to directly access file URLs from Zenodo records, improving download success rates. Without a token, the package will attempt to scrape Zenodo pages, which may fail due to rate limiting or page structure changes.
 
-```python
-from pyalex import Works
-from ecoopen import process_and_analyze_dois
+## Downloading Data from GitHub
 
-# Configure pyalex (optional, for better API access)
-import pyalex
-pyalex.config.email = "your.email@example.com"
+EcoOpen downloads data from GitHub repositories by scraping GitHub pages to find direct download links. It looks for file URLs in the repository, such as raw file links (e.g., `https://raw.githubusercontent.com/user/repo/main/data.csv`), and converts `/blob/` URLs to raw URLs for downloading. No GitHub API token is required, as the package relies entirely on web scraping for GitHub data.
 
-# Search for papers using OpenAlex
-works = Works().filter(
-    publication_year=2020,
-    title_and_abstract={"search": "ecology"}
-).get()
+**Note**: Web scraping GitHub pages may be affected by rate limiting or changes in page structure. Ensure that your IP is not blocked by GitHub when making frequent requests.
 
-# Extract DOIs from the search results
-dois = [work["doi"].replace("https://doi.org/", "") for work in works if work["doi"]]
+## Output
 
-# Process the DOIs with ecoopen
-if dois:
-    df = process_and_analyze_dois(
-        dois=dois[:5],  # Limit to 5 DOIs for this example
-        save_to_disk=True,
-        email="your.email@example.com",
-        target_formats=["csv", "xlsx"],
-        data_download_dir="./data_downloads"
-    )
-    print(df[["identifier", "doi", "title", "data_availability_statements", "all_data_availability_statements", "code_availability_statements", "all_code_availability_statements", "downloaded_data_files"]])
-else:
-    print("No papers found with the given search criteria.")
-```
+The package generates an `ecoopen_output.csv` file with the following columns:
+- `identifier`: Unique identifier for each DOI.
+- `doi`: The processed DOI.
+- `title`: Title of the paper.
+- `authors`: Authors of the paper.
+- `published`: Publication date.
+- `url`: Landing page URL.
+- `journal`: Journal name.
+- `has_fulltext`: Whether a full-text URL was found.
+- `is_oa`: Whether the paper is open access.
+- `downloaded`: Whether the PDF was successfully downloaded.
+- `path`: Path to the downloaded PDF.
+- `pdf_content_length`: Size of the PDF in bytes.
+- `data_links`: List of data URLs found in the paper.
+- `downloaded_data_files`: List of paths to downloaded data files.
+- `data_availability_statements`: Primary data availability statement.
+- `all_data_availability_statements`: All data availability statements found.
+- `code_availability_statements`: Primary code availability statement.
+- `all_code_availability_statements`: All code availability statements found.
+- `format`, `repository`, `repository_url`, `download_status`, `data_download_path`, `data_size`, `number_of_files`, `license`: Metadata about downloaded data files.
 
-#### Notes on OpenAlex Integration
+## Logging
 
-- **API Access**: OpenAlex does not require an API key, but providing an email address is recommended for better rate limits and support. See the [OpenAlex API documentation](https://docs.openalex.org/) for more details.
-- **Rate Limits**: OpenAlex has rate limits for API requests. If you encounter issues, consider adding delays between requests or contacting OpenAlex support.
-- **Search Parameters**: You can customize the search query using various filters (e.g., `publication_year`, `author`, `institution`). Refer to the [pyalex documentation](https://github.com/J535D165/pyalex) for more options.
-- **Error Handling**: Ensure you handle cases where no papers are found or DOIs are missing from the search results.
+EcoOpen generates a log file (`ecoopen.log`) with detailed information about the processing steps, including API calls, download attempts, and errors. Check this file to debug issues with PDF or data downloads.
 
-## Requirements
+## Troubleshooting
 
-- Python 3.6+
-- pandas
-- requests
-- spacy
-- pyalex
-- beautifulsoup4
-- tqdm
-- PyMuPDF
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+- **PDF Download Failures**: If PDFs fail to download (e.g., `403 Forbidden`), ensure your IP is not blocked by the target servers. The package rotates user agents to mitigate this, but some publishers may still restrict access.
+- **Data Download Failures**: If data files are not downloaded, check `ecoopen.log` for errors. Ensure that API tokens (e.g., Zenodo) are set correctly if the data links point to those repositories.
+- **GitHub Scraping Issues**: If GitHub data downloads fail, verify that the repository links are accessible and contain files in the target formats (`csv`, `xlsx`, etc.). GitHub may block requests if they detect automated scraping; consider adding delays or using a VPN if issues persist.
+- **Zenodo API Issues**: If Zenodo downloads fail, verify your API token and ensure it has the correct permissions. Without a token, the package falls back to web scraping, which may fail for complex pages.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or submit a pull request on [GitHub](https://github.com/yourusername/ecoopen).  # Replace with your GitHub URL
+Contributions are welcome! Please submit a pull request or open an issue on GitHub.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.

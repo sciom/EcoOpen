@@ -141,13 +141,21 @@ def find_pdf_url_from_landing_page(url, session):
         response.raise_for_status()
         if "text/html" in response.headers.get("content-type", "").lower():
             soup = BeautifulSoup(response.text, "html.parser")
+            # Look for direct PDF links
             pdf_links = soup.find_all("a", href=re.compile(r"\.pdf(?:\?.*)?$", re.I))
             for link in pdf_links:
                 href = link.get("href")
                 if href:
                     if href.startswith("http"):
                         return href
-                    from urllib.parse import urljoin
+                    return urljoin(url, href)
+            # Look for "Download PDF" buttons or links
+            download_links = soup.find_all("a", text=re.compile(r"download.*pdf|pdf.*download", re.I))
+            for link in download_links:
+                href = link.get("href")
+                if href:
+                    if href.startswith("http"):
+                        return href
                     return urljoin(url, href)
         return None
     except Exception as e:
@@ -161,6 +169,9 @@ def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identi
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1",
     ]
     headers = {
         "User-Agent": random.choice(user_agents),
@@ -208,11 +219,21 @@ def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identi
                         log_message("ERROR", f"Invalid or missing URL for DOI {doi}: {pdf_url}")
                         break
                     log_message("INFO", f"Attempt {attempt + 1}/3 for DOI {doi} with URL: {pdf_url}")
+                    # Update User-Agent for each attempt to avoid blocking
+                    headers["User-Agent"] = random.choice(user_agents)
+                    session.headers.update(headers)
                     response = session.get(pdf_url, timeout=15, stream=True, allow_redirects=True)
                     if response.status_code == 403:
                         log_message("WARNING", f"403 Forbidden for DOI {doi}, Response Headers: {response.headers}, Content: {response.text[:500]}...")
-                        time.sleep(random.uniform(3, 6))  # Increased delay
-                        continue
+                        time.sleep(random.uniform(5, 10))  # Increased delay
+                        # Try scraping the landing page for an alternative PDF link
+                        alt_pdf_url = find_pdf_url_from_landing_page(base_url, session)
+                        if alt_pdf_url:
+                            log_message("INFO", f"Found alternative PDF URL via scraping: {alt_pdf_url}")
+                            response = session.get(alt_pdf_url, timeout=15, stream=True, allow_redirects=True)
+                            response.raise_for_status()
+                        else:
+                            continue
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").lower()
                     if "pdf" not in content_type and "octet-stream" not in content_type:
@@ -248,7 +269,7 @@ def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identi
                 except Exception as e:
                     log_message("ERROR", f"Download error for DOI {doi}: {str(e)} (URL: {pdf_url})")
                     if attempt < 2:
-                        time.sleep(random.uniform(3, 6))  # Increased delay
+                        time.sleep(random.uniform(5, 10))  # Increased delay
                     continue
             log_message("INFO", f"All attempts failed for URL: {pdf_url}")
     return False, None, 0, ""
@@ -262,32 +283,34 @@ def download_data_file(url, doi, data_download_dir, target_formats, identifier="
     parsed_url = urlparse(url)
     path = parsed_url.path.lower()
     log_message("INFO", f"Checking URL for download: {url}, path: {path}")
+    
+    # If the URL doesn't end with a target format, it might be a landing page
     if not any(path.endswith(f".{ext}") for ext in target_formats_lower):
-        # Check Content-Type as a fallback
-        try:
-            session = requests.Session()
-            user_agents = [
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            ]
-            headers = {
-                "User-Agent": random.choice(user_agents),
-                "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-            }
-            session.headers.update(headers)
-            response = session.head(url, timeout=15, allow_redirects=True)
-            content_type = response.headers.get("content-type", "").lower()
-            log_message("INFO", f"Content-Type for URL {url}: {content_type}")
-            if not any(ext in content_type for ext in target_formats_lower):
-                log_message("INFO", f"Skipping data URL {url} for DOI {doi}: does not match target formats {target_formats}")
-                return None
-        except Exception as e:
-            log_message("ERROR", f"Failed to check Content-Type for URL {url}: {str(e)}")
+        log_message("INFO", f"URL {url} does not directly match target formats, attempting to scrape for data files")
+        # Use find_data_urls to scrape the page for downloadable files
+        session = requests.Session()
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        ]
+        headers = {
+            "User-Agent": random.choice(user_agents),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+        }
+        session.headers.update(headers)
+        new_urls = find_data_urls(url, session, target_formats_lower, max_depth=3)
+        if not new_urls:
+            log_message("INFO", f"No downloadable files found for URL {url}")
             return None
+        # Try downloading the first matching URL
+        url = new_urls[0]
+        parsed_url = urlparse(url)
+        path = parsed_url.path.lower()
+        log_message("INFO", f"Found potential data file URL after scraping: {url}, path: {path}")
 
     try:
         session = requests.Session()

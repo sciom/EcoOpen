@@ -1,9 +1,10 @@
 import requests
 import re
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from ecoopen.utils import log_message  # Import from utils
+from urllib.parse import urljoin, urlparse, quote
+import logging
 import os
+from ecoopen.utils import is_data_related_url  # Import from utils
 
 # Zenodo API token (set as environment variable for security)
 ZENODO_ACCESS_TOKEN = os.getenv("ZENODO_ACCESS_TOKEN", "")
@@ -18,11 +19,12 @@ def fetch_zenodo_files(doi_url):
     Returns:
         list: List of URLs to downloadable files.
     """
+    logging.debug(f"Fetching Zenodo files for {doi_url}")
     try:
         # Extract the Zenodo record ID from the DOI URL
         record_id = doi_url.split("zenodo.")[-1]
         if not record_id.isdigit():
-            log_message("ERROR", f"Could not extract Zenodo record ID from URL: {doi_url}")
+            logging.error(f"Could not extract Zenodo record ID from URL: {doi_url}")
             return []
         
         # Use Zenodo API to fetch the record
@@ -34,41 +36,37 @@ def fetch_zenodo_files(doi_url):
         
         # Extract file URLs
         file_urls = [file["links"]["self"] for file in record.get("files", [])]
-        log_message("INFO", f"Fetched {len(file_urls)} file URLs from Zenodo for {doi_url}: {file_urls}")
+        logging.info(f"Fetched {len(file_urls)} file URLs from Zenodo for {doi_url}: {file_urls}")
         return file_urls
     except Exception as e:
-        log_message("ERROR", f"Failed to fetch Zenodo files for {doi_url}: {str(e)}")
+        logging.error(f"Failed to fetch Zenodo files for {doi_url}: {str(e)}")
         return []
 
 def fetch_dryad_files(doi_url):
     """
-    Fetch downloadable files from Dryad using the Dryad API.
+    Fetch downloadable files from Dryad using the Dryad API download endpoint.
     
     Args:
         doi_url (str): The Dryad DOI URL (e.g., https://doi.org/10.5061/dryad.6939c)
     
     Returns:
-        list: List of URLs to downloadable files.
+        list: List of URLs to downloadable files (typically a single ZIP file).
     """
+    logging.debug(f"Fetching Dryad files for {doi_url}")
     try:
-        # Extract the Dryad identifier from the DOI URL
-        identifier = doi_url.split("dryad.")[-1]
-        api_url = f"https://datadryad.org/api/v2/datasets/doi%3A10.5061%2Fdryad.{identifier}"
-        response = requests.get(api_url, timeout=15)
-        response.raise_for_status()
-        dataset = response.json()
+        # Extract the DOI from the URL (e.g., 10.5061/dryad.6939c)
+        doi_match = re.search(r'(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)', doi_url)
+        if not doi_match:
+            logging.error(f"Could not extract Dryad DOI from URL: {doi_url}")
+            return []
         
-        # Dryad API returns file paths; construct the download URLs
-        file_urls = []
-        for file in dataset.get("_embedded", {}).get("stash:files", []):
-            file_path = file.get("path")
-            if file_path:
-                download_url = f"https://datadryad.org/stash/downloads/file_stream/{file['id']}"
-                file_urls.append(download_url)
-        log_message("INFO", f"Fetched {len(file_urls)} file URLs from Dryad for {doi_url}: {file_urls}")
-        return file_urls
+        dryad_doi = doi_match.group(1)
+        encoded_doi = quote(dryad_doi)
+        download_url = f"https://datadryad.org/api/v2/datasets/{encoded_doi}/download"
+        logging.info(f"Using Dryad API download endpoint: {download_url}")
+        return [download_url]
     except Exception as e:
-        log_message("ERROR", f"Failed to fetch Dryad files for {doi_url}: {str(e)}")
+        logging.error(f"Failed to fetch Dryad files for {doi_url}: {str(e)}")
         return []
 
 def fetch_figshare_files(doi_url):
@@ -81,6 +79,7 @@ def fetch_figshare_files(doi_url):
     Returns:
         list: List of URLs to downloadable files.
     """
+    logging.debug(f"Fetching Figshare files for {doi_url}")
     try:
         # Extract the Figshare article ID from the DOI URL
         article_id = doi_url.split("figshare.")[-1].split(".")[-1]
@@ -91,13 +90,13 @@ def fetch_figshare_files(doi_url):
         
         # Extract file URLs
         file_urls = [file["download_url"] for file in article.get("files", [])]
-        log_message("INFO", f"Fetched {len(file_urls)} file URLs from Figshare for {doi_url}: {file_urls}")
+        logging.info(f"Fetched {len(file_urls)} file URLs from Figshare for {doi_url}: {file_urls}")
         return file_urls
     except Exception as e:
-        log_message("ERROR", f"Failed to fetch Figshare files for {doi_url}: {str(e)}")
+        logging.error(f"Failed to fetch Figshare files for {doi_url}: {str(e)}")
         return []
 
-def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
+def find_data_urls(url, session, target_formats, max_depth=1, visited=None):
     """
     Recursively search for data URLs on a webpage that match the target formats.
     
@@ -115,6 +114,7 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
         visited = set()
     
     if url in visited or max_depth < 0:
+        logging.debug(f"Skipping URL {url}: already visited or max depth reached")
         return []
     
     visited.add(url)
@@ -125,24 +125,25 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
         try:
             response = session.head(url, timeout=15, allow_redirects=True)
             url = response.url
-            log_message("INFO", f"Resolved DOI URL {url} to {response.url}")
+            logging.info(f"Resolved DOI URL {url} to {response.url}")
         except Exception as e:
-            log_message("ERROR", f"Failed to resolve DOI URL {url}: {str(e)}")
+            logging.error(f"Failed to resolve DOI URL {url}: {str(e)}")
             return []
 
     # Check for specific repositories and use API if possible
     if "zenodo.org" in url:
         zenodo_files = fetch_zenodo_files(url)
-        data_urls.extend(zenodo_files)
+        data_urls.extend([u for u in zenodo_files if is_data_related_url(u, target_formats)])
     elif "dryad" in url:
         dryad_files = fetch_dryad_files(url)
-        data_urls.extend(dryad_files)
+        data_urls.extend([u for u in dryad_files if is_data_related_url(u, target_formats)])
     elif "figshare.com" in url or "figshare" in url:
         figshare_files = fetch_figshare_files(url)
-        data_urls.extend(figshare_files)
+        data_urls.extend([u for u in figshare_files if is_data_related_url(u, target_formats)])
 
     # If API calls returned files, return them
     if data_urls:
+        logging.info(f"Returning API-fetched data URLs: {data_urls}")
         return data_urls
 
     # Otherwise, fall back to web scraping
@@ -154,11 +155,12 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
         # Check if the URL is a direct file link by examining Content-Type
         content_type = response.headers.get("content-type", "").lower()
         if any(ext in content_type for ext in target_formats) or any(url.lower().endswith(f".{ext.lower()}") for ext in target_formats):
-            log_message("INFO", f"Found direct data URL: {url}")
+            logging.info(f"Found direct data URL: {url}")
             return [url]
         
         # If the content is HTML, parse it for links
         if "text/html" not in content_type:
+            logging.debug(f"Skipping non-HTML content at {url}: Content-Type: {content_type}")
             return []
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -171,7 +173,7 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
                 href = link.get("href")
                 if href:
                     full_url = urljoin(url, href)
-                    if full_url not in visited:
+                    if is_data_related_url(full_url, target_formats) and full_url not in visited:
                         data_urls.append(full_url)
                         visited.add(full_url)
         
@@ -182,28 +184,23 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
             for link in potential_links:
                 href = link.get("href")
                 full_url = urljoin(url, href)
-                if full_url not in visited:
-                    log_message("INFO", f"Following potential download link: {full_url}")
+                if is_data_related_url(full_url, target_formats) and full_url not in visited:
+                    logging.info(f"Following potential download link: {full_url}")
                     # Handle specific repository patterns
                     if "github.com" in full_url:
-                        # Check if the URL is a /blob/ link, which can be converted to a raw URL
                         if "/blob/" in full_url:
                             raw_url = full_url.replace("/blob/", "/raw/")
-                            # Check if the raw URL matches a target format
                             if any(raw_url.lower().endswith(f".{ext}") for ext in target_formats):
                                 data_urls.append(raw_url)
                                 visited.add(raw_url)
                             else:
-                                # Follow the raw URL to see if it leads to more files
                                 sub_urls = find_data_urls(raw_url, session, target_formats, max_depth - 1, visited)
                                 data_urls.extend(sub_urls)
                         elif "raw.githubusercontent.com" in full_url:
-                            # Direct raw file URL
                             if any(full_url.lower().endswith(f".{ext}") for ext in target_formats):
                                 data_urls.append(full_url)
                                 visited.add(full_url)
                         else:
-                            # Follow the link to find more files
                             sub_urls = find_data_urls(full_url, session, target_formats, max_depth - 1, visited)
                             data_urls.extend(sub_urls)
                     elif "dryad" in full_url and "/stash/" in full_url:
@@ -222,8 +219,8 @@ def find_data_urls(url, session, target_formats, max_depth=3, visited=None):
                         sub_urls = find_data_urls(full_url, session, target_formats, max_depth - 1, visited)
                         data_urls.extend(sub_urls)
         
-        log_message("INFO", f"Found {len(data_urls)} data URLs at {url}: {data_urls}")
+        logging.info(f"Found {len(data_urls)} data URLs at {url}: {data_urls}")
         return data_urls
     except Exception as e:
-        log_message("ERROR", f"Error scraping data URLs from {url}: {str(e)}")
+        logging.error(f"Error scraping data URLs from {url}: {str(e)}")
         return []

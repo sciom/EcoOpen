@@ -11,6 +11,10 @@ __pycache__/
 *.egg-info/
 
 data_downloads/
+<<<<<<< HEAD
 pdf_downloads/
 
 *.log
+=======
+pdf_downloads/
+>>>>>>> f97735de14f8d7e0fe038d01a330bda76c876313

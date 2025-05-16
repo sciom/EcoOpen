@@ -1,36 +1,33 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="EcoOpen",
-    version="0.0.53",
+    name="ecoopen",
+    version="0.1.0",
+    author="Your Name",
+    author_email="your.email@example.com",
+    description="A package to process DOIs, download PDFs, and analyze data and code availability statements.",
+    long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/ecoopen",
     packages=find_packages(),
     install_requires=[
-        "habanero",
-        "numpy",
         "pandas",
-        "scipy",
-        "pdfplumber",
+        "requests",
+        "spacy",
+        "pyalex",
         "beautifulsoup4",
-        "scikit-learn",
-        "jupyterlab",
-        "lxml",
-        "requests-html",
-        "lxml-html-clean",
-        "validators",
-        "pyDataverse",
-        "pdf2doi",
-        "pdfminer.six",
-        "pyalex"
+        "tqdm",
+        "PyMuPDF",
     ],
-    # entry_points={
-    #     "console_scripts": [
-    #         "EcoOpen=EcoOpen.core:main"
-    #     ]
-    # }
-    author="Sciom d.o.o.",
-    author_email="domagoj@sciom.hr",
-    description="A tool for gathering information about data and data in scientific journals.",
-    license="MIT",
-    keywords="scientific journals, open access, data_mining",
-    url="https://sciom.hr"
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    python_requires=">=3.6",
+    entry_points={
+        "console_scripts": [
+            "ecoopen = ecoopen.cli:main",
+        ],
+    },
 )

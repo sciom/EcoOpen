@@ -1,3 +1,16 @@
 examples/
+downloads
 
 .vscode*
+
+.~lock.*
+
+*.cpython*
+__pycache__/
+
+*.egg-info/
+
+data_downloads/
+pdf_downloads/
+
+*.log

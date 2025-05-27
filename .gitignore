@@ -12,3 +12,5 @@ __pycache__/
 
 data_downloads/
 pdf_downloads/
+
+*.log

@@ -97,7 +97,7 @@ def truncate_statement(statement, max_length=MAX_STATEMENT_LENGTH):
     return statement
 
 @sleep_and_retry
-@limits(calls=10, period=60)  # 10 calls per minute
+@limits(calls=5, period=120)  # Reduced calls to avoid rate limits
 def get_unpaywall_data(doi, email=None):
     """Query Unpaywall for open-access status and full-text URL."""
     logging.debug(f"Starting Unpaywall query for DOI: {doi}")
@@ -134,10 +134,24 @@ def get_unpaywall_data(doi, email=None):
         logging.error(f"Unpaywall error for DOI {doi}: {str(e)}")
         return False, False, []
 
+def get_crossref_journal(doi):
+    """Query CrossRef for journal name as a fallback."""
+    url = f"https://api.crossref.org/works/{quote(doi)}"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        journal = data["message"].get("container-title", [""])[0]
+        logging.debug(f"CrossRef journal for DOI {doi}: {journal}")
+        return journal
+    except Exception as e:
+        logging.error(f"CrossRef error for DOI {doi}: {str(e)}")
+        return ""
+
 @sleep_and_retry
-@limits(calls=10, period=60)  # 10 calls per minute
+@limits(calls=5, period=120)  # Reduced calls to avoid rate limits
 def get_openalex_data(doi):
-    """Query OpenAlex for metadata and potential PDF URL."""
+    """Query OpenAlex for metadata and potential PDF URL with CrossRef fallback."""
     logging.debug(f"Starting OpenAlex query for DOI: {doi}")
     try:
         work = Works().filter(doi=doi).get()
@@ -146,17 +160,22 @@ def get_openalex_data(doi):
             title = work.get("title", "")
             authors = ", ".join([auth["author"]["display_name"] for auth in work.get("authorships", [])])
             published = work.get("publication_date", "")
-            journal = work.get("host_venue", {}).get("display_name", "")
-            url = work.get("host_venue", {}).get("url", "")
+            host_venue = work.get("host_venue", {})
+            journal = host_venue.get("display_name", "")
+            if not journal:  # Fallback to CrossRef if journal is missing
+                journal = get_crossref_journal(doi)
+            url = host_venue.get("url", "")
             pdf_url = work.get("open_access", {}).get("oa_url", None)
             if pdf_url and len(pdf_url) > MAX_URL_LENGTH:
                 pdf_url = None
-            logging.info(f"OpenAlex for DOI {doi}: pdf_url={pdf_url}, landing_page_url={url}")
+            logging.info(f"OpenAlex for DOI {doi}: pdf_url={pdf_url}, landing_page_url={url}, journal={journal}")
             return title, authors, published, journal, url, pdf_url
         return "", "", "", "", "", None
     except Exception as e:
         logging.error(f"OpenAlex error for DOI {doi}: {str(e)}")
-        return "", "", "", "", "", None
+        # Try CrossRef as a last resort
+        journal = get_crossref_journal(doi)
+        return "", "", "", journal, "", None
 
 def find_pdf_url_from_landing_page(url, session):
     """Attempt to find a PDF URL by scraping the landing page."""
@@ -565,7 +584,7 @@ def extract_urls_from_text(text, prioritize_data_section=False):
             logging.warning(f"Discarding URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
             continue
         url_lower = url.lower()
-        # Only include URLs from known data repositories or with data file extensions
+        # Include URLs from known data repositories or with data file extensions
         if (
             re.match(r"^https?://", url, re.IGNORECASE) and
             (any(domain in url_lower for domain in data_domains) or
@@ -789,9 +808,8 @@ def analyze_data_availability(text, doc_cache=None):
             full_text_urls = extract_urls_from_full_text(text)
             all_data_links.extend([url for url in full_text_urls if len(url) <= MAX_URL_LENGTH])
         
-        all_statements_formatted = [truncate_statement(stmt) for _, stmt, _ in all_statements]
         logging.debug(f"Final data links after all searches: {all_data_links}")
-        return best_statement, all_data_links, all_statements_formatted
+        return best_statement, all_data_links, []
     
     logging.info(f"No data availability statement found for DOI. Text excerpt: {text[:500]}...")
     full_text_urls = extract_urls_from_full_text(text)
@@ -898,14 +916,13 @@ def analyze_code_availability(text, doc_cache=None, data_section_text=None):
         category = all_statements[0][0]
         score = all_statements[0][2]
         logging.info(f"Best code availability statement: Category={category}, Score={score}, Statement={best_statement}")
-        all_statements_formatted = [truncate_statement(stmt) for _, stmt, _ in all_statements]
-        return best_statement, all_statements_formatted
+        return best_statement, []
     
     logging.info(f"No code availability statement found for DOI. Text excerpt: {text[:500]}...")
     return "No code availability statement found.", []
 
-def analyze_data_metadata(links):
-    """Analyze metadata of data links (format, repository, etc.)."""
+def analyze_data_metadata(links, downloaded_files=None):
+    """Analyze metadata of data links (format, repository, etc.) with fallback inference."""
     metadata = {
         "format": "",
         "repository": "",
@@ -914,10 +931,11 @@ def analyze_data_metadata(links):
         "data_download_path": "",
         "data_size": 0.0,
         "number_of_files": 0,
-        "license": ""
+        "license": "Unknown"
     }
     
     if not links:
+        logging.debug("No data links provided for metadata analysis")
         return metadata
     
     link = links[0]
@@ -925,48 +943,84 @@ def analyze_data_metadata(links):
         logging.warning(f"Skipping data metadata analysis due to URL length > {MAX_URL_LENGTH}: {link[:100]}...")
         return metadata
     
-    try:
-        response = requests.head(link, timeout=10, allow_redirects=True)
-        response.raise_for_status()
-        
-        content_type = response.headers.get("content-type", "").lower()
-        if "csv" in content_type:
-            metadata["format"] = "CSV"
-        elif "json" in content_type:
-            metadata["format"] = "JSON"
-        elif "zip" in content_type:
-            metadata["format"] = "ZIP"
-        else:
-            metadata["format"] = content_type.split("/")[-1] if "/" in content_type else "Unknown"
-        
-        content_length = response.headers.get("content-length")
-        if content_length:
-            metadata["data_size"] = float(content_length) / 1024
-        
-        if "zenodo.org" in link:
-            metadata["repository"] = "Zenodo"
-            metadata["repository_url"] = "https://zenodo.org"
-        elif "figshare.com" in link:
-            metadata["repository"] = "Figshare"
-            metadata["repository_url"] = "https://figshare.com"
-        elif "github.com" in link:
-            metadata["repository"] = "GitHub"
-            metadata["repository_url"] = "https://github.com"
-        elif "dryad" in link:
-            metadata["repository"] = "Dryad"
-            metadata["repository_url"] = "https://datadryad.org"
-        else:
-            metadata["repository"] = "Unknown"
-            metadata["repository_url"] = link
-        
-        metadata["download_status"] = True
-        metadata["number_of_files"] = 1
-        metadata["license"] = "Unknown"
-        
-        logging.info(f"Data metadata for link {link}: {metadata}")
-    except Exception as e:
-        logging.error(f"Error analyzing data metadata for link {link}: {str(e)}")
+    # Infer repository and repository_url from URL
+    url_lower = link.lower()
+    if "zenodo.org" in url_lower:
+        metadata["repository"] = "Zenodo"
+        metadata["repository_url"] = "https://zenodo.org"
+    elif "figshare.com" in url_lower:
+        metadata["repository"] = "Figshare"
+        metadata["repository_url"] = "https://figshare.com"
+    elif "github.com" in url_lower:
+        metadata["repository"] = "GitHub"
+        metadata["repository_url"] = "https://github.com"
+    elif "dryad" in url_lower:
+        metadata["repository"] = "Dryad"
+        metadata["repository_url"] = "https://datadryad.org"
+    elif "dataverse.org" in url_lower:
+        metadata["repository"] = "Dataverse"
+        metadata["repository_url"] = "https://dataverse.org"
+    elif "osf.io" in url_lower:
+        metadata["repository"] = "OSF"
+        metadata["repository_url"] = "https://osf.io"
+    else:
+        metadata["repository"] = "Unknown"
+        metadata["repository_url"] = link.split('/')[0] + '//' + urlparse(link).netloc
     
+    # Infer format from URL extension
+    parsed_url = urlparse(link)
+    path = parsed_url.path.lower()
+    for ext in DEFAULT_DATA_FORMATS:
+        if path.endswith(f".{ext.lower()}"):
+            metadata["format"] = ext.upper()
+            break
+    if not metadata["format"]:
+        # Try to infer from content-type
+        try:
+            response = requests.head(link, timeout=10, allow_redirects=True)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+            if "csv" in content_type:
+                metadata["format"] = "CSV"
+            elif "json" in content_type:
+                metadata["format"] = "JSON"
+            elif "zip" in content_type:
+                metadata["format"] = "ZIP"
+            elif "excel" in content_type or "spreadsheet" in content_type:
+                metadata["format"] = "XLSX"
+            elif "text" in content_type:
+                metadata["format"] = "TXT"
+            else:
+                metadata["format"] = content_type.split("/")[-1] if "/" in content_type else "Unknown"
+        except Exception as e:
+            logging.error(f"Error analyzing content-type for link {link}: {str(e)}")
+            metadata["format"] = "Unknown"
+    
+    # Update metadata based on downloaded files
+    if downloaded_files:
+        metadata["download_status"] = True
+        metadata["data_download_path"] = ";".join(downloaded_files)
+        metadata["number_of_files"] = len(downloaded_files)
+        for file_path in downloaded_files:
+            try:
+                file_size = os.path.getsize(file_path) / 1024  # Size in KB
+                metadata["data_size"] += file_size
+            except Exception as e:
+                logging.error(f"Error getting size for file {file_path}: {str(e)}")
+    
+    # Attempt to infer license
+    try:
+        response = requests.get(link, timeout=15, allow_redirects=True)
+        response.raise_for_status()
+        if "text/html" in response.headers.get("content-type", "").lower():
+            soup = BeautifulSoup(response.text, "html.parser")
+            license_elements = soup.find_all(text=re.compile(r"CC\s*BY|Creative\s*Commons|MIT\s*License|Apache\s*License", re.I))
+            if license_elements:
+                metadata["license"] = license_elements[0].strip()[:50]
+    except Exception as e:
+        logging.debug(f"Could not infer license for link {link}: {str(e)}")
+    
+    logging.info(f"Data metadata for link {link}: {metadata}")
     return metadata
 
 def process_doi_wrapper(args):
@@ -1007,22 +1061,12 @@ def process_single_doi(doi, save_to_disk=True, email=None, download_dir=DOWNLOAD
     text = extract_text_from_pdf(pdf_content) if downloaded else ""
     doc_cache = {}
     
-    data_availability, data_links, all_data_statements = analyze_data_availability(text, doc_cache)
+    data_availability, data_links, _ = analyze_data_availability(text, doc_cache)
     data_section_text = find_section(text, keywords["data_availability"], ["ORCID", "References", "Acknowledgments", "Conflict of Interest", "Author Contributions"])
     
-    code_availability, all_code_statements = analyze_code_availability(text, doc_cache, data_section_text)
+    code_availability, _ = analyze_code_availability(text, doc_cache, data_section_text)
     
-    data_metadata = analyze_data_metadata(data_links) if data_links else {
-        "format": "",
-        "repository": "",
-        "repository_url": "",
-        "download_status": False,
-        "data_download_path": "",
-        "data_size": 0.0,
-        "number_of_files": 0,
-        "license": ""
-    }
-
+    # Search for additional data links if none found
     additional_data_links = []
     session = requests.Session()
     landing_pages = [url] if url else []
@@ -1041,6 +1085,7 @@ def process_single_doi(doi, save_to_disk=True, email=None, download_dir=DOWNLOAD
     all_data_links = list(set(data_links + additional_data_links))
     logging.info(f"All data links for DOI {doi}: {all_data_links}")
 
+    # Download data files
     downloaded_data_files = []
     create_data_download_dir(data_download_dir)
     for link in all_data_links:
@@ -1048,6 +1093,18 @@ def process_single_doi(doi, save_to_disk=True, email=None, download_dir=DOWNLOAD
         if file_path:
             downloaded_data_files.append(file_path)
     
+    # Analyze metadata with downloaded files
+    data_metadata = analyze_data_metadata(all_data_links, downloaded_data_files) if all_data_links else {
+        "format": "",
+        "repository": "",
+        "repository_url": "",
+        "download_status": False,
+        "data_download_path": "",
+        "data_size": 0.0,
+        "number_of_files": 0,
+        "license": "Unknown"
+    }
+
     result = {
         "identifier": identifier,
         "doi": doi,
@@ -1064,9 +1121,7 @@ def process_single_doi(doi, save_to_disk=True, email=None, download_dir=DOWNLOAD
         "data_links": all_data_links,
         "downloaded_data_files": downloaded_data_files,
         "data_availability_statements": data_availability,
-        "all_data_availability_statements": all_data_statements,
         "code_availability_statements": code_availability,
-        "all_code_availability_statements": all_code_statements,
         "format": data_metadata["format"],
         "repository": data_metadata["repository"],
         "repository_url": data_metadata["repository_url"],

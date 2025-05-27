@@ -12,7 +12,7 @@ import logging
 from bs4 import BeautifulSoup
 import os
 import spacy
-from ecoopen.keywords import keywords  # Absolute import
+from ecoopen.keywords import keywords, DATA_AVAILABILITY_KEYWORDS, CODE_AVAILABILITY_KEYWORDS  # Absolute import
 from ecoopen.data_mining import find_data_urls  # Import from data_mining
 from ecoopen.utils import log_message, is_data_related_url  # Import from utils
 import unicodedata
@@ -469,34 +469,29 @@ def extract_text_from_pdf(pdf_content):
         logging.error(f"Error extracting text from PDF: {str(e)}")
         return ""
 
-def find_section(text, section_keywords, next_section_keywords=None):
-    """Find a specific section in the text (e.g., 'Data Availability') and extract its content."""
-    logging.debug(f"Finding section with keywords: {section_keywords}")
-    lines = text.split('\n')
-    section_text = []
-    in_section = False
-    
+def find_section(text, section_keywords, next_section_keywords):
+    """Find section in text based on keywords, robust to variations and multi-line headers."""
+    lines = text.splitlines()
+    section_start = None
+    section_end = None
     for i, line in enumerate(lines):
-        if any(keyword.lower() in line.lower() for keyword in section_keywords):
-            logging.debug(f"Found section start: {line.strip()}")
-            in_section = True
-            continue
-        
-        if in_section and next_section_keywords:
-            if any(keyword.lower() in line.lower() for keyword in next_section_keywords):
-                logging.debug(f"Reached next section: {line.strip()}")
+        for kw in section_keywords:
+            if kw.lower() in line.lower():
+                section_start = i
                 break
-        
-        if in_section and line.strip():
-            section_text.append(line.strip())
-    
-    if section_text:
-        section = ' '.join(section_text).strip()
-        section = clean_text(section)
-        logging.debug(f"Found section: {section[:500]}...")
+        if section_start is not None:
+            break
+    if section_start is not None:
+        for j in range(section_start + 1, len(lines)):
+            for next_kw in next_section_keywords:
+                if next_kw.lower() in lines[j].lower():
+                    section_end = j
+                    break
+            if section_end is not None:
+                break
+        section = "\n".join(lines[section_start:section_end]) if section_end else "\n".join(lines[section_start:])
         return section
-    logging.debug("No specific section found, returning full text")
-    return clean_text(text)
+    return text  # fallback: return full text
 
 def search_for_dataset(dataset_name, doi):
     """Search for the dataset online to find potential URLs."""
@@ -645,6 +640,38 @@ def score_code_statement(statement, category):
     score += repo_count * 5
 
     return score
+
+NEGATION_KEYWORDS = [
+    "not available", "upon request", "restricted", "cannot be shared", "not publicly available"
+]
+
+def is_negated(statement):
+    return any(neg_kw in statement.lower() for neg_kw in NEGATION_KEYWORDS)
+
+def extract_availability_statements(text, keywords):
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    relevant = []
+    for sent in sentences:
+        if any(kw.lower() in sent.lower() for kw in keywords):
+            if not is_negated(sent):
+                relevant.append(sent)
+    return " ".join(relevant)
+
+def extract_data_and_code_availability(text):
+    data_section = find_section(text, DATA_AVAILABILITY_KEYWORDS, CODE_AVAILABILITY_KEYWORDS)
+    code_section = find_section(text, CODE_AVAILABILITY_KEYWORDS, DATA_AVAILABILITY_KEYWORDS)
+    data_statements = extract_availability_statements(data_section, DATA_AVAILABILITY_KEYWORDS)
+    code_statements = extract_availability_statements(code_section, CODE_AVAILABILITY_KEYWORDS)
+    data_urls = extract_urls(data_section)
+    code_urls = extract_urls(code_section)
+    data_accessions = extract_accessions(data_section)
+    return {
+        "data_statements": data_statements,
+        "data_urls": data_urls,
+        "data_accessions": data_accessions,
+        "code_statements": code_statements,
+        "code_urls": code_urls,
+    }
 
 def analyze_data_availability(text, doc_cache=None):
     """Analyze text for data availability statements using NLP and extract data links."""

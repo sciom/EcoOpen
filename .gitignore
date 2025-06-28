@@ -13,3 +13,6 @@ __pycache__/
 data_downloads/
 pdf_downloads/
 
+# Log files
+*.log
+

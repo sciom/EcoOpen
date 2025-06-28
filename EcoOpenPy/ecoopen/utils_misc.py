@@ -4,7 +4,6 @@ from ecoopen.constants import MAX_URL_LENGTH
 
 logger = logging.getLogger(__name__)
 
-# Simplified logging utility for multiprocessing compatibility
 def log_message(level: str, message: str) -> None:
     """Log a message at the specified level."""
     if level == "INFO":

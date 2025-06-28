@@ -14,10 +14,14 @@ import os
 import spacy
 from ecoopen.keywords import keywords, DATA_AVAILABILITY_KEYWORDS, CODE_AVAILABILITY_KEYWORDS  # Absolute import
 from ecoopen.data_mining import find_data_urls  # Import from data_mining
-from ecoopen.utils import log_message, is_data_related_url  # Import from utils
+from ecoopen.utils_misc import log_message, is_data_related_url  # Import from utils_misc
 import unicodedata
 import signal
 from ratelimit import limits, sleep_and_retry
+from typing import Any, Dict, List, Optional, Tuple, Union
+from ecoopen.constants import USER_AGENTS, MAX_URL_LENGTH, MAX_STATEMENT_LENGTH
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 DOWNLOAD_DIR = "./downloads"
@@ -50,20 +54,20 @@ def validate_doi(doi):
     try:
         return bool(re.match(doi_pattern, doi))
     except TypeError:
-        logging.warning(f"Invalid DOI format: {doi}")
+        logger.warning(f"Invalid DOI format: {doi}")
         return False
 
 def create_download_dir(download_dir=DOWNLOAD_DIR):
     """Create download directory if it doesn't exist."""
     if not os.path.exists(download_dir):
         os.makedirs(download_dir)
-        logging.info(f"Created download directory: {download_dir}")
+        logger.info(f"Created download directory: {download_dir}")
 
 def create_data_download_dir(data_download_dir=DATA_DOWNLOAD_DIR):
     """Create data download directory if it doesn't exist."""
     if not os.path.exists(data_download_dir):
         os.makedirs(data_download_dir)
-        logging.info(f"Created data download directory: {data_download_dir}")
+        logger.info(f"Created data download directory: {data_download_dir}")
 
 def create_article_subfolder(data_download_dir, identifier, doi):
     """Create a subfolder for an article based on identifier and DOI."""
@@ -72,7 +76,7 @@ def create_article_subfolder(data_download_dir, identifier, doi):
     subfolder_path = os.path.join(data_download_dir, subfolder_name)
     if not os.path.exists(subfolder_path):
         os.makedirs(subfolder_path)
-        logging.info(f"Created article subfolder: {subfolder_path}")
+        logger.info(f"Created article subfolder: {subfolder_path}")
     return subfolder_path
 
 def sanitize_filename(text, max_length=50):
@@ -82,34 +86,32 @@ def sanitize_filename(text, max_length=50):
     text = re.sub(r'[^a-zA-Z0-9_-]', '', text)
     return text[:max_length]
 
-def clean_text(text):
+def clean_text(text: str) -> str:
     """Clean text by removing invisible Unicode characters."""
     cleaned_text = unicodedata.normalize('NFKD', text)
     cleaned_text = ''.join(c for c in cleaned_text if unicodedata.category(c) not in ('Cf', 'Cc', 'Cn'))
-    logging.debug(f"Cleaned text from '{text[:100]}...' to '{cleaned_text[:100]}...'")
+    logger.debug(f"Cleaned text from '{text[:100]}...' to '{cleaned_text[:100]}...'")
     return cleaned_text
 
-def truncate_statement(statement, max_length=MAX_STATEMENT_LENGTH):
+def truncate_statement(statement: str, max_length: int = MAX_STATEMENT_LENGTH) -> str:
     """Truncate a statement to a maximum length, adding ellipsis if needed."""
     if len(statement) > max_length:
         statement = statement[:max_length - 3] + "..."
-        logging.debug(f"Truncated statement to {max_length} characters: {statement}")
+        logger.debug(f"Truncated statement to {max_length} characters: {statement}")
     return statement
 
 @sleep_and_retry
 @limits(calls=5, period=120)  # Reduced calls to avoid rate limits
-def get_unpaywall_data(doi, email=None):
+def get_unpaywall_data(doi: str, email: Optional[str] = None) -> Tuple[bool, bool, List[str]]:
     """Query Unpaywall for open-access status and full-text URL."""
-    logging.debug(f"Starting Unpaywall query for DOI: {doi}")
+    logger.debug(f"Starting Unpaywall query for DOI: {doi}")
     if email is None:
         email = os.getenv("UNPAYWALL_EMAIL")
-    
     if not email:
         raise ValueError("An email address is required for Unpaywall API requests.")
-    
     try:
         url = f"https://api.unpaywall.org/v2/{quote(doi)}?email={email}"
-        logging.debug(f"Unpaywall API URL: {url}")
+        logger.debug(f"Unpaywall API URL: {url}")
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -128,13 +130,13 @@ def get_unpaywall_data(doi, email=None):
                         publisher_urls.append(url_to_add)
             fulltext_urls = repo_urls + publisher_urls
         has_fulltext = bool(fulltext_urls)
-        logging.info(f"Unpaywall for DOI {doi}: is_oa={is_oa}, has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}")
+        logger.info(f"Unpaywall for DOI {doi}: is_oa={is_oa}, has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}")
         return is_oa, has_fulltext, fulltext_urls
-    except Exception as e:
-        logging.error(f"Unpaywall error for DOI {doi}: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Unpaywall error for DOI {doi}: {str(e)}")
         return False, False, []
 
-def get_crossref_journal(doi):
+def get_crossref_journal(doi: str) -> str:
     """Query CrossRef for journal name as a fallback."""
     url = f"https://api.crossref.org/works/{quote(doi)}"
     try:
@@ -142,17 +144,17 @@ def get_crossref_journal(doi):
         response.raise_for_status()
         data = response.json()
         journal = data["message"].get("container-title", [""])[0]
-        logging.debug(f"CrossRef journal for DOI {doi}: {journal}")
+        logger.debug(f"CrossRef journal for DOI {doi}: {journal}")
         return journal
-    except Exception as e:
-        logging.error(f"CrossRef error for DOI {doi}: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"CrossRef error for DOI {doi}: {str(e)}")
         return ""
 
 @sleep_and_retry
 @limits(calls=5, period=120)  # Reduced calls to avoid rate limits
-def get_openalex_data(doi):
+def get_openalex_data(doi: str) -> Tuple[str, str, str, str, str, Optional[str]]:
     """Query OpenAlex for metadata and potential PDF URL with CrossRef fallback."""
-    logging.debug(f"Starting OpenAlex query for DOI: {doi}")
+    logger.debug(f"Starting OpenAlex query for DOI: {doi}")
     try:
         work = Works().filter(doi=doi).get()
         if work:
@@ -162,24 +164,23 @@ def get_openalex_data(doi):
             published = work.get("publication_date", "")
             host_venue = work.get("host_venue", {})
             journal = host_venue.get("display_name", "")
-            if not journal:  # Fallback to CrossRef if journal is missing
+            if not journal:
                 journal = get_crossref_journal(doi)
             url = host_venue.get("url", "")
             pdf_url = work.get("open_access", {}).get("oa_url", None)
             if pdf_url and len(pdf_url) > MAX_URL_LENGTH:
                 pdf_url = None
-            logging.info(f"OpenAlex for DOI {doi}: pdf_url={pdf_url}, landing_page_url={url}, journal={journal}")
+            logger.info(f"OpenAlex for DOI {doi}: pdf_url={pdf_url}, landing_page_url={url}, journal={journal}")
             return title, authors, published, journal, url, pdf_url
         return "", "", "", "", "", None
     except Exception as e:
-        logging.error(f"OpenAlex error for DOI {doi}: {str(e)}")
-        # Try CrossRef as a last resort
+        logger.error(f"OpenAlex error for DOI {doi}: {str(e)}")
         journal = get_crossref_journal(doi)
         return "", "", "", journal, "", None
 
 def find_pdf_url_from_landing_page(url, session):
     """Attempt to find a PDF URL by scraping the landing page."""
-    logging.debug(f"Scraping landing page for PDF URL: {url}")
+    logger.debug(f"Scraping landing page for PDF URL: {url}")
     try:
         response = session.get(url, timeout=15, allow_redirects=True)
         response.raise_for_status()
@@ -190,32 +191,32 @@ def find_pdf_url_from_landing_page(url, session):
                 href = link.get("href")
                 if href and len(href) <= MAX_URL_LENGTH:
                     if href.startswith("http"):
-                        logging.debug(f"Found PDF URL: {href}")
+                        logger.debug(f"Found PDF URL: {href}")
                         return href
                     full_url = urljoin(url, href)
                     if len(full_url) <= MAX_URL_LENGTH:
-                        logging.debug(f"Found PDF URL (relative): {full_url}")
+                        logger.debug(f"Found PDF URL (relative): {full_url}")
                         return full_url
             download_links = soup.find_all("a", text=re.compile(r"download.*pdf|pdf.*download", re.I))
             for link in download_links:
                 href = link.get("href")
                 if href and len(href) <= MAX_URL_LENGTH:
                     if href.startswith("http"):
-                        logging.debug(f"Found PDF URL via download link: {href}")
+                        logger.debug(f"Found PDF URL via download link: {href}")
                         return href
                     full_url = urljoin(url, href)
                     if len(full_url) <= MAX_URL_LENGTH:
-                        logging.debug(f"Found PDF URL via download link (relative): {full_url}")
+                        logger.debug(f"Found PDF URL via download link (relative): {full_url}")
                         return full_url
-        logging.debug(f"No PDF URL found on landing page: {url}")
+        logger.debug(f"No PDF URL found on landing page: {url}")
         return None
     except Exception as e:
-        logging.error(f"Error scraping PDF URL from landing page {url}: {str(e)}")
+        logger.error(f"Error scraping PDF URL from landing page {url}: {str(e)}")
         return None
 
 def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identifier="001", title="unknown"):
     """Download PDF from a list of URLs and return binary content."""
-    logging.debug(f"Starting PDF download for DOI: {doi}, URLs: {urls}")
+    logger.debug(f"Starting PDF download for DOI: {doi}, URLs: {urls}")
     session = requests.Session()
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -242,21 +243,21 @@ def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identi
     
     for url in urls:
         if len(url) > MAX_URL_LENGTH:
-            logging.warning(f"Skipping PDF URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
+            logger.warning(f"Skipping PDF URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
             continue
-        logging.info(f"Attempting PDF download from URL: {url}")
+        logger.info(f"Attempting PDF download from URL: {url}")
         parsed_url = urlparse(url)
         base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path.rsplit('/', 1)[0]}"
         headers["Referer"] = base_url
         session.headers.update(headers)
 
         try:
-            logging.debug(f"Visiting landing page: {base_url}")
+            logger.debug(f"Visiting landing page: {base_url}")
             landing_response = session.get(base_url, timeout=15, allow_redirects=True)
             landing_response.raise_for_status()
-            logging.info(f"Visited landing page for DOI {doi}: {base_url}, Cookies: {session.cookies.get_dict()}")
+            logger.info(f"Visited landing page for DOI {doi}: {base_url}, Cookies: {session.cookies.get_dict()}")
         except Exception as e:
-            logging.warning(f"Failed to visit landing page for DOI {doi}: {base_url}, Error: {str(e)}")
+            logger.warning(f"Failed to visit landing page for DOI {doi}: {base_url}, Error: {str(e)}")
 
         url_variants = [url]
         if "version=" in url:
@@ -265,96 +266,96 @@ def download_pdf(doi, urls, save_to_disk=True, download_dir=DOWNLOAD_DIR, identi
 
         for pdf_url in url_variants:
             if len(pdf_url) > MAX_URL_LENGTH:
-                logging.warning(f"Skipping PDF URL variant due to length > {MAX_URL_LENGTH}: {pdf_url[:100]}...")
+                logger.warning(f"Skipping PDF URL variant due to length > {MAX_URL_LENGTH}: {pdf_url[:100]}...")
                 continue
             for attempt in range(3):
                 try:
                     if not pdf_url or not pdf_url.startswith(('http://', 'https://')):
-                        logging.error(f"Invalid or missing URL for DOI {doi}: {pdf_url}")
+                        logger.error(f"Invalid or missing URL for DOI {doi}: {pdf_url}")
                         break
-                    logging.info(f"Attempt {attempt + 1}/3 for DOI {doi} with URL: {pdf_url}")
+                    logger.info(f"Attempt {attempt + 1}/3 for DOI {doi} with URL: {pdf_url}")
                     headers["User-Agent"] = random.choice(user_agents)
                     session.headers.update(headers)
                     response = session.get(pdf_url, timeout=15, stream=True, allow_redirects=True)
                     if response.status_code == 403:
-                        logging.warning(f"403 Forbidden for DOI {doi}, Response Headers: {response.headers}, Content: {response.text[:500]}...")
+                        logger.warning(f"403 Forbidden for DOI {doi}, Response Headers: {response.headers}, Content: {response.text[:500]}...")
                         time.sleep(random.uniform(5, 10))
                         alt_pdf_url = find_pdf_url_from_landing_page(base_url, session)
                         if alt_pdf_url and len(alt_pdf_url) <= MAX_URL_LENGTH:
-                            logging.info(f"Found alternative PDF URL via scraping: {alt_pdf_url}")
+                            logger.info(f"Found alternative PDF URL via scraping: {alt_pdf_url}")
                             response = session.get(alt_pdf_url, timeout=15, stream=True, allow_redirects=True)
                             response.raise_for_status()
                         else:
                             continue
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").lower()
-                    logging.debug(f"Content-Type of response: {content_type}")
+                    logger.debug(f"Content-Type of response: {content_type}")
                     if "pdf" not in content_type and "octet-stream" not in content_type:
                         if not pdf_url.endswith(".pdf"):
                             new_url = pdf_url.rstrip("/") + "/pdf"
                             if len(new_url) > MAX_URL_LENGTH:
-                                logging.warning(f"Skipping modified PDF URL due to length > {MAX_URL_LENGTH}: {new_url[:100]}...")
+                                logger.warning(f"Skipping modified PDF URL due to length > {MAX_URL_LENGTH}: {new_url[:100]}...")
                                 continue
-                            logging.info(f"URL not a PDF, trying modified URL for DOI {doi}: {new_url}")
+                            logger.info(f"URL not a PDF, trying modified URL for DOI {doi}: {new_url}")
                             response = session.get(new_url, timeout=15, stream=True, allow_redirects=True)
                             response.raise_for_status()
                             content_type = response.headers.get("content-type", "").lower()
-                            logging.debug(f"Content-Type of modified URL response: {content_type}")
+                            logger.debug(f"Content-Type of modified URL response: {content_type}")
                             if "pdf" not in content_type and "octet-stream" not in content_type:
                                 pdf_url_from_landing = find_pdf_url_from_landing_page(base_url, session)
                                 if pdf_url_from_landing and len(pdf_url_from_landing) <= MAX_URL_LENGTH:
-                                    logging.info(f"Found PDF URL via scraping for DOI {doi}: {pdf_url_from_landing}")
+                                    logger.info(f"Found PDF URL via scraping for DOI {doi}: {pdf_url_from_landing}")
                                     response = session.get(pdf_url_from_landing, timeout=15, stream=True, allow_redirects=True)
                                     response.raise_for_status()
                                     content_type = response.headers.get("content-type", "").lower()
-                                    logging.debug(f"Content-Type of scraped URL response: {content_type}")
+                                    logger.debug(f"Content-Type of scraped URL response: {content_type}")
                                     if "pdf" not in content_type and "octet-stream" not in content_type:
-                                        logging.warning(f"Scraped URL for DOI {doi} does not point to a PDF: {pdf_url_from_landing}, Content-Type: {content_type}")
+                                        logger.warning(f"Scraped URL for DOI {doi} does not point to a PDF: {pdf_url_from_landing}, Content-Type: {content_type}")
                                         break
                                 else:
-                                    logging.warning(f"No PDF URL found after scraping for DOI {doi}, Content-Type: {content_type}")
+                                    logger.warning(f"No PDF URL found after scraping for DOI {doi}, Content-Type: {content_type}")
                                     break
                     pdf_content = b"".join(response.iter_content(chunk_size=8192))
                     pdf_content_length = len(pdf_content)
-                    logging.debug(f"PDF content length: {pdf_content_length} bytes")
+                    logger.debug(f"PDF content length: {pdf_content_length} bytes")
                     if save_to_disk:
                         create_download_dir(download_dir)
                         with open(file_path, "wb") as f:
                             f.write(pdf_content)
-                        logging.info(f"Saved PDF for DOI {doi} to {file_path} (size: {pdf_content_length} bytes)")
+                        logger.info(f"Saved PDF for DOI {doi} to {file_path} (size: {pdf_content_length} bytes)")
                     else:
-                        logging.info(f"Downloaded PDF content for DOI {doi} (size: {pdf_content_length} bytes, not saved to disk)")
+                        logger.info(f"Downloaded PDF content for DOI {doi} (size: {pdf_content_length} bytes, not saved to disk)")
                     return True, pdf_content, pdf_content_length, file_path
                 except Exception as e:
-                    logging.error(f"Download error for DOI {doi}: {str(e)} (URL: {pdf_url})")
+                    logger.error(f"Download error for DOI {doi}: {str(e)} (URL: {pdf_url})")
                     if attempt < 2:
                         time.sleep(random.uniform(5, 10))
                     continue
-            logging.info(f"All attempts failed for URL: {pdf_url}")
+            logger.info(f"All attempts failed for URL: {pdf_url}")
     return False, None, 0, ""
 
 def download_data_file(url, doi, data_download_dir, target_formats, identifier="001", title="unknown", recursion_depth=0):
     """Download a data file if it matches the target formats, saving to an article-specific subfolder."""
-    logging.debug(f"Starting data download for URL: {url}, DOI: {doi}, recursion_depth: {recursion_depth}")
+    logger.debug(f"Starting data download for URL: {url}, DOI: {doi}, recursion_depth: {recursion_depth}")
     if recursion_depth > 1:  # Limit recursion to one level
-        logging.info(f"Maximum recursion depth reached for URL {url}")
+        logger.info(f"Maximum recursion depth reached for URL {url}")
         return None
     
     if len(url) > MAX_URL_LENGTH:
-        logging.warning(f"Skipping data URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
+        logger.warning(f"Skipping data URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
         return None
     
     target_formats_lower = [ext.lower().lstrip('.') for ext in target_formats]
-    logging.debug(f"Target formats (lowercase): {target_formats_lower}")
+    logger.debug(f"Target formats (lowercase): {target_formats_lower}")
     
     article_subfolder = create_article_subfolder(data_download_dir, identifier, doi)
     
     parsed_url = urlparse(url)
     path = parsed_url.path.lower()
-    logging.info(f"Checking URL for download: {url}, path: {path}")
+    logger.info(f"Checking URL for download: {url}, path: {path}")
     
     if not is_data_related_url(url, target_formats_lower):
-        logging.info(f"Skipping non-data-related URL: {url}")
+        logger.info(f"Skipping non-data-related URL: {url}")
         return None
     
     if any(path.endswith(f".{ext}") for ext in target_formats_lower):
@@ -373,27 +374,27 @@ def download_data_file(url, doi, data_download_dir, target_formats, identifier="
                 "Connection": "keep-alive",
             }
             session.headers.update(headers)
-            logging.debug(f"Headers for download session: {headers}")
+            logger.debug(f"Headers for download session: {headers}")
 
-            logging.debug(f"Sending GET request to URL: {url}")
+            logger.debug(f"Sending GET request to URL: {url}")
             response = session.get(url, timeout=15, stream=True, allow_redirects=True)
-            logging.debug(f"Response status code: {response.status_code}")
+            logger.debug(f"Response status code: {response.status_code}")
             response.raise_for_status()
 
             filename = None
             content_disposition = response.headers.get("content-disposition", "")
-            logging.debug(f"Content-Disposition header: {content_disposition}")
+            logger.debug(f"Content-Disposition header: {content_disposition}")
             if "filename=" in content_disposition.lower():
                 filename = re.findall(r'filename="(.+)"', content_disposition)
                 filename = filename[0] if filename else None
-                logging.debug(f"Filename extracted from Content-Disposition: {filename}")
+                logger.debug(f"Filename extracted from Content-Disposition: {filename}")
             if not filename:
                 filename = os.path.basename(parsed_url.path) or "downloaded_data"
-                logging.debug(f"Filename extracted from URL path: {filename}")
+                logger.debug(f"Filename extracted from URL path: {filename}")
             
             if not any(filename.lower().endswith(f".{ext}") for ext in target_formats_lower):
                 content_type = response.headers.get("content-type", "").lower()
-                logging.debug(f"Content-Type of downloaded file: {content_type}")
+                logger.debug(f"Content-Type of downloaded file: {content_type}")
                 if "csv" in content_type:
                     filename += ".csv"
                 elif "excel" in content_type or "spreadsheet" in content_type:
@@ -407,29 +408,29 @@ def download_data_file(url, doi, data_download_dir, target_formats, identifier="
                 elif "tar" in content_type:
                     filename += ".tar.gz"
                 else:
-                    logging.info(f"Skipping data URL {url} for DOI {doi}: unable to determine file format from Content-Type: {content_type}")
+                    logger.info(f"Skipping data URL {url} for DOI {doi}: unable to determine file format from Content-Type: {content_type}")
                     return None
-                logging.debug(f"Updated filename with inferred extension: {filename}")
+                logger.debug(f"Updated filename with inferred extension: {filename}")
 
             base_filename, ext = os.path.splitext(filename)
             safe_filename = f"{base_filename}{ext}"
             file_path = os.path.join(article_subfolder, safe_filename)
-            logging.debug(f"Safe filename for download: {safe_filename}, full path: {file_path}")
+            logger.debug(f"Safe filename for download: {safe_filename}, full path: {file_path}")
 
             with open(file_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-                        logging.debug(f"Wrote chunk of {len(chunk)} bytes to {file_path}")
+                        logger.debug(f"Wrote chunk of {len(chunk)} bytes to {file_path}")
             
             file_size = os.path.getsize(file_path) / 1024
-            logging.info(f"Downloaded data file for DOI {doi} to {file_path} (size: {file_size:.2f} KB)")
+            logger.info(f"Downloaded data file for DOI {doi} to {file_path} (size: {file_size:.2f} KB)")
             return file_path
         except Exception as e:
-            logging.error(f"Failed to download data file from {url} for DOI {doi}: {str(e)}")
+            logger.error(f"Failed to download data file from {url} for DOI {doi}: {str(e)}")
             return None
     
-    logging.info(f"URL {url} does not directly match target formats, attempting to scrape for data files")
+    logger.info(f"URL {url} does not directly match target formats, attempting to scrape for data files")
     session = requests.Session()
     user_agents = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -444,11 +445,11 @@ def download_data_file(url, doi, data_download_dir, target_formats, identifier="
         "Connection": "keep-alive",
     }
     session.headers.update(headers)
-    logging.debug(f"Headers for scraping session: {headers}")
+    logger.debug(f"Headers for scraping session: {headers}")
     new_urls = find_data_urls(url, session, target_formats_lower, max_depth=1)
-    logging.debug(f"Found potential data URLs after scraping: {new_urls}")
+    logger.debug(f"Found potential data URLs after scraping: {new_urls}")
     if not new_urls:
-        logging.info(f"No downloadable files found for URL {url}")
+        logger.info(f"No downloadable files found for URL {url}")
         return None
     
     downloaded_files = []
@@ -467,7 +468,7 @@ def timeout_handler(signum, frame):
 
 def extract_text_from_pdf(pdf_content):
     """Extract text from PDF content (binary string) with timeout."""
-    logging.debug(f"Starting PDF text extraction, content length: {len(pdf_content) if pdf_content else 0} bytes")
+    logger.debug(f"Starting PDF text extraction, content length: {len(pdf_content) if pdf_content else 0} bytes")
     try:
         if not pdf_content:
             return ""
@@ -478,97 +479,52 @@ def extract_text_from_pdf(pdf_content):
         for page in doc:
             page_text = page.get_text("text")
             text += page_text
-            logging.debug(f"Extracted text from page, length: {len(page_text)} characters")
+            logger.debug(f"Extracted text from page, length: {len(page_text)} characters")
         doc.close()
         signal.alarm(0)  # Disable alarm
-        logging.info(f"Extracted text from PDF (length: {len(text)} characters)")
+        logger.info(f"Extracted text from PDF (length: {len(text)} characters)")
         return clean_text(text)
     except Exception as e:
         signal.alarm(0)  # Disable alarm on error
-        logging.error(f"Error extracting text from PDF: {str(e)}")
+        logger.error(f"Error extracting text from PDF: {str(e)}")
         return ""
 
-def find_section(text, section_keywords, next_section_keywords):
-    """Find section in text based on keywords, robust to variations and multi-line headers."""
-    lines = text.splitlines()
-    section_start = None
-    section_end = None
-    for i, line in enumerate(lines):
-        for kw in section_keywords:
-            if kw.lower() in line.lower():
-                section_start = i
-                break
-        if section_start is not None:
-            break
-    if section_start is not None:
-        for j in range(section_start + 1, len(lines)):
-            for next_kw in next_section_keywords:
-                if next_kw.lower() in lines[j].lower():
-                    section_end = j
-                    break
-            if section_end is not None:
-                break
-        section = "\n".join(lines[section_start:section_end]) if section_end else "\n".join(lines[section_start:])
-        return section
-    return text  # fallback: return full text
+# --- Enhanced Extraction Logic ---
 
-def search_for_dataset(dataset_name, doi):
-    """Search for the dataset online to find potential URLs."""
-    logging.debug(f"Searching for dataset: {dataset_name}")
-    potential_urls = []
-    dataset_name_lower = dataset_name.lower()
+def extract_dois_from_text(text: str) -> List[str]:
+    """Extract DOIs from text using robust regex."""
+    doi_pattern = r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+"
+    found = re.findall(doi_pattern, text)
+    # Clean and deduplicate
+    dois = list({doi.strip('.,;:()[]<>') for doi in found if validate_doi(doi)})
+    logger.debug(f"Extracted DOIs: {dois}")
+    return dois
 
-    repositories = [
-        ("Dryad", "https://datadryad.org/stash/dataset/"),
-        ("Zenodo", "https://zenodo.org/record/"),
-        ("Figshare", "https://figshare.com/articles/dataset/"),
-        ("GitHub", "https://github.com/search?q="),
+def extract_accessions_from_text(text: str) -> List[str]:
+    """Extract accession numbers using stricter patterns (e.g., PRJNA123456, SRR123456, GSE123456)."""
+    # Common bio accession patterns (add more as needed)
+    patterns = [
+        r"PRJNA\d{6,}", r"SRR\d{6,}", r"GSE\d{6,}", r"GSM\d{6,}", r"EGAS\d{6,}", r"EGAD\d{6,}",
+        r"ENA\d{6,}", r"E-MTAB-\d{3,}", r"PXD\d{6,}", r"SAMN\d{6,}", r"DRR\d{6,}", r"ERR\d{6,}",
+        r"SRX\d{6,}", r"ERX\d{6,}", r"DRX\d{6,}", r"SRS\d{6,}", r"ERS\d{6,}", r"DRS\d{6,}"
     ]
+    found = set()
+    for pat in patterns:
+        found.update(re.findall(pat, text))
+    accessions = list(found)
+    logger.debug(f"Extracted accessions: {accessions}")
+    return accessions
 
-    for repo_name, base_url in repositories:
-        if repo_name.lower() in dataset_name_lower:
-            url = f"{base_url}{dataset_name.replace(' ', '_')}"
-            if len(url) <= MAX_URL_LENGTH:
-                potential_urls.append(url)
-        else:
-            url = f"{base_url}{dataset_name.replace(' ', '+')}"
-            if len(url) <= MAX_URL_LENGTH:
-                potential_urls.append(url)
-
-    logging.debug(f"Potential URLs for dataset {dataset_name}: {potential_urls}")
-    return potential_urls
-
-def clean_url(url):
-    """Clean a URL by removing invisible Unicode characters."""
-    cleaned_url = unicodedata.normalize('NFKD', url)
-    cleaned_url = ''.join(c for c in cleaned_url if unicodedata.category(c) not in ('Cf', 'Cc', 'Cn'))
-    logging.debug(f"Cleaned URL from '{url}' to '{cleaned_url}'")
-    return cleaned_url
-
-def extract_urls_from_text(text, prioritize_data_section=False):
+def extract_urls_from_text(text: str, prioritize_data_section: bool = False) -> List[str]:
     """Extract URLs from a given text string, prioritizing data-related URLs."""
-    logging.debug(f"Extracting URLs from text: {text[:500]}...")
-    # Updated regex to stop at common URL boundaries
-    url_pattern = r"(https?://[^\s<>\"\';)]+|doi:[^\s<>\"\';)]+|<doi:[^\s<>\"\';)]+>|www\.[^\s<>\"\';)]+|10\.\d{4,9}/[^\s<>\"\';)]+)"
+    url_pattern = r"(https?://[^\s<>\"';)]+|doi:[^\s<>\"';)]+|<doi:[^\s<>\"';)]+>|www\.[^\s<>\"';)]+|10\.\d{4,9}/[^\s<>\"';)]+)"
     urls = re.findall(url_pattern, text, re.IGNORECASE)
     cleaned_urls = []
     data_domains = [
         "zenodo.org", "dryad.org", "figshare.com", "github.com", "raw.githubusercontent.com",
         "dataverse.org", "osf.io", "pangaea.de", "genbank", "sra", "geo", "arrayexpress", "ena"
     ]
-    
-    # Use NLP to prioritize URLs from data accessibility section
-    if prioritize_data_section:
-        doc = nlp(text)
-        data_urls = []
-        for sent in doc.sents:
-            sent_text = sent.text.lower()
-            if any(kw in sent_text for kw in ["data accessibility", "data availability", "dataset"]):
-                sent_urls = re.findall(url_pattern, sent.text, re.IGNORECASE)
-                data_urls.extend(sent_urls)
-        if data_urls:
-            urls = data_urls  # Prioritize URLs from data section
-    
+    DEFAULT_DATA_FORMATS = ["csv", "tsv", "txt", "xlsx", "xls", "zip", "rar", "tar.gz"]
     for url in urls:
         url = url.strip(".,;()[]{}")
         if url.startswith("www."):
@@ -579,30 +535,21 @@ def extract_urls_from_text(text, prioritize_data_section=False):
             url = "https://doi.org/" + url[5:-1]
         elif url.startswith("10.") and "/" in url:
             url = "https://doi.org/" + url
-        url = clean_url(url)
         if len(url) > MAX_URL_LENGTH:
-            logging.warning(f"Discarding URL due to length > {MAX_URL_LENGTH}: {url[:100]}...")
             continue
         url_lower = url.lower()
-        # Include URLs from known data repositories or with data file extensions
         if (
             re.match(r"^https?://", url, re.IGNORECASE) and
             (any(domain in url_lower for domain in data_domains) or
              any(url_lower.endswith(f".{ext}") for ext in DEFAULT_DATA_FORMATS))
         ):
             cleaned_urls.append(url)
-    logging.debug(f"Extracted URLs: {cleaned_urls}")
     return cleaned_urls
 
-def extract_urls_from_full_text(text):
-    """Extract URLs from the entire PDF text, without prioritizing data section."""
-    return extract_urls_from_text(text, prioritize_data_section=False)
-
-def score_data_statement(statement, category):
+def score_data_statement(statement: str, category: str) -> int:
     """Score a data availability statement based on relevance and context."""
     score = 0
     statement_lower = statement.lower()
-
     priority = {
         "Available in Repository": 5,
         "Available in Supplementary Materials": 4,
@@ -611,567 +558,194 @@ def score_data_statement(statement, category):
         "Not Available": 1
     }
     score += priority.get(category, 0) * 10
-
     paper_specific_phrases = ["this study", "we provide", "our data", "our dataset", "in this paper"]
     if any(phrase in statement_lower for phrase in paper_specific_phrases):
         score += 20
-
     third_party_phrases = ["obtained from", "third-party", "third party", "accessed from"]
     if any(phrase in statement_lower for phrase in third_party_phrases):
         score -= 15
-
-    data_keywords = keywords["data"] + keywords["all_data"] + keywords["dataset_name"]
+    data_keywords = ["data", "dataset", "supplementary"]
     keyword_count = sum(1 for kw in data_keywords if kw in statement_lower)
     score += keyword_count * 2
-
-    repo_count = sum(1 for repo in keywords["repositories"] + keywords["field_specific_repo"] if repo.lower() in statement_lower)
+    repo_count = sum(1 for repo in ["zenodo", "figshare", "dryad", "dataverse", "osf", "github"] if repo in statement_lower)
     score += repo_count * 5
-
     return score
 
-def score_code_statement(statement, category):
-    """Score a code availability statement based on relevance and context."""
-    score = 0
-    statement_lower = statement.lower()
-
-    priority = {
-        "Available in Repository": 5,
-        "Available in Supplementary Materials": 4,
-        "Available Upon Request": 3,
-        "Other Availability": 2,
-        "Not Available": 1
-    }
-    score += priority.get(category, 0) * 10
-
-    paper_specific_phrases = ["this study", "we provide", "our code", "in this paper"]
-    if any(phrase in statement_lower for phrase in paper_specific_phrases):
-        score += 20
-
-    third_party_phrases = ["obtained from", "third-party", "third party", "accessed from"]
-    if any(phrase in statement_lower for phrase in third_party_phrases):
-        score -= 15
-
-    code_keywords = keywords["source_code"]
-    keyword_count = sum(1 for kw in code_keywords if kw in statement_lower)
-    score += keyword_count * 2
-
-    repo_count = sum(1 for repo in keywords["github"] + keywords["repositories"] if repo.lower() in statement_lower)
-    score += repo_count * 5
-
-    return score
-
-NEGATION_KEYWORDS = [
-    "not available", "upon request", "restricted", "cannot be shared", "not publicly available"
-]
-
-def is_negated(statement):
-    return any(neg_kw in statement.lower() for neg_kw in NEGATION_KEYWORDS)
-
-def extract_availability_statements(text, keywords):
+def extract_all_information(text: str) -> dict:
+    """
+    Extract all relevant information (data/code availability, DOIs, URLs, accessions, etc.) from text.
+    Returns a dictionary with all detected items, including Oddpub-inspired logic.
+    """
+    # Section detection (simple version)
+    data_section = text
+    code_section = text
+    # Sentence tokenization (robust)
+    import re
     sentences = re.split(r'(?<=[.!?])\s+', text)
-    relevant = []
-    for sent in sentences:
-        if any(kw.lower() in sent.lower() for kw in keywords):
-            if not is_negated(sent):
-                relevant.append(sent)
-    return " ".join(relevant)
-
-def extract_data_and_code_availability(text):
-    data_section = find_section(text, DATA_AVAILABILITY_KEYWORDS, CODE_AVAILABILITY_KEYWORDS)
-    code_section = find_section(text, CODE_AVAILABILITY_KEYWORDS, DATA_AVAILABILITY_KEYWORDS)
-    data_statements = extract_availability_statements(data_section, DATA_AVAILABILITY_KEYWORDS)
-    code_statements = extract_availability_statements(code_section, CODE_AVAILABILITY_KEYWORDS)
-    data_urls = extract_urls(data_section)
-    code_urls = extract_urls(code_section)
-    data_accessions = extract_accessions(data_section)
-    return {
-        "data_statements": data_statements,
-        "data_urls": data_urls,
-        "data_accessions": data_accessions,
-        "code_statements": code_statements,
-        "code_urls": code_urls,
-    }
-
-def analyze_data_availability(text, doc_cache=None):
-    """Analyze text for data availability statements using NLP and extract data links."""
-    if not text:
-        return "No text available for analysis.", [], []
-
-    next_section_keywords = ["ORCID", "References", "Acknowledgments", "Conflict of Interest", "Author Contributions"]
-    relevant_text = find_section(text, keywords["data_availability"], next_section_keywords)
-    logging.debug(f"Data availability section text: {relevant_text[:500]}...")
-    
-    doc = doc_cache.get(relevant_text) if doc_cache and relevant_text in doc_cache else nlp(relevant_text)
-    if doc_cache is not None and relevant_text not in doc_cache:
-        doc_cache[relevant_text] = doc
-    
-    data_keywords = keywords["data"] + keywords["all_data"] + keywords["dataset_name"]
-    availability_keywords = keywords["available"] + keywords["was_available"]
-    negation_keywords = keywords["not_available"] + keywords["not_data"]
-    repository_keywords = keywords["repositories"] + keywords["field_specific_repo"] + keywords["github"]
-    request_keywords = keywords["upon_request"]
-    supplement_keywords = keywords["supplement"] + keywords["supplemental_table_name"] + keywords["supplemental_dataset"]
-    
-    all_statements = []
-    current_statement = []
-    current_category = None
-    all_data_links = []
-    best_statement = None
-    best_score = -1
-    
-    for sent in doc.sents:
-        sent_text = clean_text(sent.text)
-        sent_text_lower = sent_text.lower()
-        has_data = any(kw in sent_text_lower for kw in data_keywords)
-        has_availability = any(kw in sent_text_lower for kw in availability_keywords)
-        logging.debug(f"Sentence: '{sent_text}', has_data={has_data} (keywords matched: {', '.join(kw for kw in data_keywords if kw in sent_text_lower)}), has_availability={has_availability} (keywords matched: {', '.join(kw for kw in availability_keywords if kw in sent_text_lower)})")
-        
-        if has_data and has_availability:
-            urls = extract_urls_from_text(sent_text, prioritize_data_section=True)
-            all_data_links.extend(urls)
-            logging.debug(f"Extracted URLs from data availability sentence '{sent_text}': {urls}")
-
-            has_negation = any(kw in sent_text_lower for kw in negation_keywords)
-            has_repository = any(kw in sent_text_lower for kw in repository_keywords)
-            has_request = any(kw in sent_text_lower for kw in request_keywords)
-            has_supplement = any(kw in sent_text_lower for kw in supplement_keywords)
-            has_accession = any(pattern.search(sent_text_lower) for pattern in ACCESSION_PATTERNS)
-            
-            if has_negation:
-                category = "Not Available"
-            elif has_request:
-                category = "Available Upon Request"
-            elif has_repository or has_accession:
-                category = "Available in Repository"
-            elif has_supplement:
-                category = "Available in Supplementary Materials"
-            else:
-                category = "Other Availability"
-            
-            if current_statement and current_category == category:
-                current_statement.append(sent_text.strip())
-            else:
-                if current_statement:
-                    full_statement = " ".join(current_statement)
-                    score = score_data_statement(full_statement, current_category)
-                    all_statements.append((current_category, full_statement, score))
-                    logging.debug(f"Scored data statement: Category={current_category}, Score={score}, Statement={full_statement[:500]}...")
-                    if score > best_score:
-                        best_statement = full_statement
-                        best_score = score
-                current_statement = [sent_text.strip()]
-                current_category = category
-        else:
-            if current_statement:
-                full_statement = " ".join(current_statement)
-                score = score_data_statement(full_statement, current_category)
-                all_statements.append((current_category, full_statement, score))
-                logging.debug(f"Scored data statement: Category={current_category}, Score={score}, Statement={full_statement[:500]}...")
-                if score > best_score:
-                    best_statement = full_statement
-                    best_score = score
-                current_statement = []
-                current_category = None
-    
-    if current_statement:
-        full_statement = " ".join(current_statement)
-        score = score_data_statement(full_statement, current_category)
-        all_statements.append((current_category, full_statement, score))
-        logging.debug(f"Scored data statement: Category={current_category}, Score={score}, Statement={full_statement[:500]}...")
-        if score > best_score:
-            best_statement = full_statement
-            best_score = score
-    
-    section_urls = extract_urls_from_text(relevant_text, prioritize_data_section=True)
-    all_data_links.extend([url for url in section_urls if url not in all_data_links])
-    logging.debug(f"Extracted URLs from entire data availability section: {section_urls}")
-
-    has_data_keywords = any(kw in relevant_text.lower() for kw in data_keywords)
-    logging.debug(f"Section contains data keywords: {has_data_keywords} (keywords matched: {', '.join(kw for kw in data_keywords if kw in relevant_text.lower())})")
-    
-    if all_statements:
-        if best_statement:
-            best_statement = truncate_statement(best_statement)
-            logging.info(f"Best data availability statement selected: Score={best_score}, Statement={best_statement}")
-        else:
-            best_statement = truncate_statement(all_statements[0][1])
-            logging.info(f"No best statement found, using first statement: Statement={best_statement}")
-        
-        if not all_data_links and "available" in relevant_text.lower() and "not available" not in relevant_text.lower():
-            dataset_name = relevant_text
-            logging.info(f"No URLs found in statement, searching for dataset: {dataset_name}")
-            potential_urls = search_for_dataset(dataset_name, "")
-            all_data_links.extend([url for url in potential_urls if len(url) <= MAX_URL_LENGTH])
-
-        if not all_data_links:
-            logging.info("No URLs found after dataset search, searching full text for URLs")
-            full_text_urls = extract_urls_from_full_text(text)
-            all_data_links.extend([url for url in full_text_urls if len(url) <= MAX_URL_LENGTH])
-        
-        logging.debug(f"Final data links after all searches: {all_data_links}")
-        return best_statement, all_data_links, []
-    
-    logging.info(f"No data availability statement found for DOI. Text excerpt: {text[:500]}...")
-    full_text_urls = extract_urls_from_full_text(text)
-    return "No data availability statement found.", full_text_urls, []
-
-def analyze_code_availability(text, doc_cache=None, data_section_text=None):
-    """Analyze text for code availability statements using NLP."""
-    if not text:
-        return "No text available for analysis.", []
-
-    next_section_keywords = ["ORCID", "References", "Acknowledgments", "Conflict of Interest", "Author Contributions", "Data Availability"]
-    section_keywords = ["Code Availability", "Software Availability", "Availability of Code", "Supporting Information"]
-    relevant_text = find_section(text, section_keywords, next_section_keywords)
-    logging.debug(f"Code availability section text: {relevant_text[:500]}...")
-    
-    doc = doc_cache.get(relevant_text) if doc_cache and relevant_text in doc_cache else nlp(relevant_text)
-    if doc_cache is not None and relevant_text not in doc_cache:
-        doc_cache[relevant_text] = doc
-    
-    code_keywords = keywords["source_code"]
-    availability_keywords = keywords["available"] + keywords["was_available"]
-    negation_keywords = keywords["not_available"]
-    repository_keywords = keywords["github"] + keywords["repositories"]
-    request_keywords = keywords["upon_request"]
-    supplement_keywords = keywords["supplement"] + keywords["supplemental_table_name"]
-    
-    all_statements = []
-    
-    for sent in doc.sents:
-        sent_text = clean_text(sent.text)
-        sent_text_lower = sent_text.lower()
-        has_code = any(kw in sent_text_lower for kw in code_keywords)
-        has_availability = any(kw in sent_text_lower for kw in availability_keywords)
-        logging.debug(f"Sentence in code section: '{sent_text}', has_code={has_code} (keywords matched: {', '.join(kw for kw in code_keywords if kw in sent_text_lower)}), has_availability={has_availability} (keywords matched: {', '.join(kw for kw in availability_keywords if kw in sent_text_lower)})")
-        
-        if has_code and has_availability:
-            has_negation = any(kw in sent_text_lower for kw in negation_keywords)
-            has_repository = any(kw in sent_text_lower for kw in repository_keywords)
-            has_request = any(kw in sent_text_lower for kw in request_keywords)
-            has_supplement = any(kw in sent_text_lower for kw in supplement_keywords)
-            
-            if has_negation:
-                category = "Not Available"
-            elif has_request:
-                category = "Available Upon Request"
-            elif has_repository:
-                category = "Available in Repository"
-            elif has_supplement:
-                category = "Available in Supplementary Materials"
-            else:
-                category = "Other Availability"
-            
-            score = score_code_statement(sent_text, category)
-            all_statements.append((category, sent_text, score))
-            logging.debug(f"Found code statement in code section: Category={category}, Score={score}, Statement={sent_text[:500]}...")
-    
-    if not all_statements and data_section_text:
-        logging.info("No dedicated code availability section found, checking data availability section for code references")
-        section_text = clean_text(data_section_text)
-        section_lower = section_text.lower()
-        has_code_in_section = any(kw in section_lower for kw in code_keywords)
-        has_availability_in_section = any(kw in section_lower for kw in availability_keywords)
-        logging.debug(f"Data section text: '{section_text[:500]}...', has_code={has_code_in_section} (keywords matched: {', '.join(kw for kw in code_keywords if kw in section_lower)}), has_availability={has_availability_in_section} (keywords matched: {', '.join(kw for kw in availability_keywords if kw in section_lower)})")
-        
-        if has_code_in_section:
-            doc = nlp(section_text)
-            for sent in doc.sents:
-                sent_text = clean_text(sent.text)
-                sent_text_lower = sent_text.lower()
-                has_code = any(kw in sent_text_lower for kw in code_keywords)
-                has_availability = any(kw in sent_text_lower for kw in availability_keywords)
-                logging.debug(f"Sentence in data section: '{sent_text}', has_code={has_code} (keywords matched: {', '.join(kw for kw in code_keywords if kw in sent_text_lower)}), has_availability={has_availability} (keywords matched: {', '.join(kw for kw in availability_keywords if kw in sent_text_lower)})")
-                
-                if has_code and has_availability:
-                    has_negation = any(kw in sent_text_lower for kw in negation_keywords)
-                    has_repository = any(kw in sent_text_lower for kw in repository_keywords)
-                    has_request = any(kw in sent_text_lower for kw in request_keywords)
-                    has_supplement = any(kw in sent_text_lower for kw in supplement_keywords)
-                    
-                    if has_negation:
-                        category = "Not Available"
-                    elif has_request:
-                        category = "Available Upon Request"
-                    elif has_repository:
-                        category = "Available in Repository"
-                    elif has_supplement:
-                        category = "Available in Supplementary Materials"
-                    else:
-                        category = "Other Availability"
-                    
-                    score = score_code_statement(sent_text, category)
-                    all_statements.append((category, sent_text, score))
-                    logging.debug(f"Found code statement in data section: Category={category}, Score={score}, Statement={sent_text[:500]}...")
-                elif has_code:
-                    if has_availability_in_section:
-                        category = "Other Availability"
-                        score = score_code_statement(sent_text, category)
-                        all_statements.append((category, sent_text, score))
-                        logging.debug(f"Found partial code statement in data section (availability in section): Category={category}, Score={score}, Statement={sent_text[:500]}...")
-    
-    if all_statements:
-        all_statements.sort(key=lambda x: x[2], reverse=True)
-        best_statement = truncate_statement(all_statements[0][1])
-        category = all_statements[0][0]
-        score = all_statements[0][2]
-        logging.info(f"Best code availability statement: Category={category}, Score={score}, Statement={best_statement}")
-        return best_statement, []
-    
-    logging.info(f"No code availability statement found for DOI. Text excerpt: {text[:500]}...")
-    return "No code availability statement found.", []
-
-def analyze_data_metadata(links, downloaded_files=None):
-    """Analyze metadata of data links (format, repository, etc.) with fallback inference."""
-    metadata = {
-        "format": "",
-        "repository": "",
-        "repository_url": "",
-        "download_status": False,
-        "data_download_path": "",
-        "data_size": 0.0,
-        "number_of_files": 0,
-        "license": "Unknown"
-    }
-    
-    if not links:
-        logging.debug("No data links provided for metadata analysis")
-        return metadata
-    
-    link = links[0]
-    if len(link) > MAX_URL_LENGTH:
-        logging.warning(f"Skipping data metadata analysis due to URL length > {MAX_URL_LENGTH}: {link[:100]}...")
-        return metadata
-    
-    # Infer repository and repository_url from URL
-    url_lower = link.lower()
-    if "zenodo.org" in url_lower:
-        metadata["repository"] = "Zenodo"
-        metadata["repository_url"] = "https://zenodo.org"
-    elif "figshare.com" in url_lower:
-        metadata["repository"] = "Figshare"
-        metadata["repository_url"] = "https://figshare.com"
-    elif "github.com" in url_lower:
-        metadata["repository"] = "GitHub"
-        metadata["repository_url"] = "https://github.com"
-    elif "dryad" in url_lower:
-        metadata["repository"] = "Dryad"
-        metadata["repository_url"] = "https://datadryad.org"
-    elif "dataverse.org" in url_lower:
-        metadata["repository"] = "Dataverse"
-        metadata["repository_url"] = "https://dataverse.org"
-    elif "osf.io" in url_lower:
-        metadata["repository"] = "OSF"
-        metadata["repository_url"] = "https://osf.io"
-    else:
-        metadata["repository"] = "Unknown"
-        metadata["repository_url"] = link.split('/')[0] + '//' + urlparse(link).netloc
-    
-    # Infer format from URL extension
-    parsed_url = urlparse(link)
-    path = parsed_url.path.lower()
-    for ext in DEFAULT_DATA_FORMATS:
-        if path.endswith(f".{ext.lower()}"):
-            metadata["format"] = ext.upper()
-            break
-    if not metadata["format"]:
-        # Try to infer from content-type
-        try:
-            response = requests.head(link, timeout=10, allow_redirects=True)
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if "csv" in content_type:
-                metadata["format"] = "CSV"
-            elif "json" in content_type:
-                metadata["format"] = "JSON"
-            elif "zip" in content_type:
-                metadata["format"] = "ZIP"
-            elif "excel" in content_type or "spreadsheet" in content_type:
-                metadata["format"] = "XLSX"
-            elif "text" in content_type:
-                metadata["format"] = "TXT"
-            else:
-                metadata["format"] = content_type.split("/")[-1] if "/" in content_type else "Unknown"
-        except Exception as e:
-            logging.error(f"Error analyzing content-type for link {link}: {str(e)}")
-            metadata["format"] = "Unknown"
-    
-    # Update metadata based on downloaded files
-    if downloaded_files:
-        metadata["download_status"] = True
-        metadata["data_download_path"] = ";".join(downloaded_files)
-        metadata["number_of_files"] = len(downloaded_files)
-        for file_path in downloaded_files:
-            try:
-                file_size = os.path.getsize(file_path) / 1024  # Size in KB
-                metadata["data_size"] += file_size
-            except Exception as e:
-                logging.error(f"Error getting size for file {file_path}: {str(e)}")
-    
-    # Attempt to infer license
-    try:
-        response = requests.get(link, timeout=15, allow_redirects=True)
-        response.raise_for_status()
-        if "text/html" in response.headers.get("content-type", "").lower():
-            soup = BeautifulSoup(response.text, "html.parser")
-            license_elements = soup.find_all(text=re.compile(r"CC\s*BY|Creative\s*Commons|MIT\s*License|Apache\s*License", re.I))
-            if license_elements:
-                metadata["license"] = license_elements[0].strip()[:50]
-    except Exception as e:
-        logging.debug(f"Could not infer license for link {link}: {str(e)}")
-    
-    logging.info(f"Data metadata for link {link}: {metadata}")
-    return metadata
-
-def process_doi_wrapper(args):
-    """Wrapper function to call process_single_doi with arguments."""
-    init_logging()  # Ensure logging is set up in child process
-    doi, save_to_disk, email, download_dir, data_download_dir, target_formats, identifier, title = args
-    return process_single_doi(doi, save_to_disk, email, download_dir, data_download_dir, target_formats, identifier, title)
-
-def process_single_doi(doi, save_to_disk=True, email=None, download_dir=DOWNLOAD_DIR, data_download_dir=DATA_DOWNLOAD_DIR, target_formats=DEFAULT_DATA_FORMATS, identifier="001", title="unknown"):
-    """Process a single DOI (used for parallel processing)."""
-    logging.debug(f"Starting processing for DOI: {doi}")
-    if not validate_doi(doi):
-        logging.warning(f"Invalid DOI: {doi}")
-        return None
-    
-    is_oa, has_fulltext, fulltext_urls = get_unpaywall_data(doi, email)
-    logging.info(f"DOI {doi}: is_oa={is_oa}, has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}")
-    
-    title_from_api, authors, published, journal, url, pdf_url = get_openalex_data(doi)
-    title = title_from_api if title_from_api else title
-    
-    downloaded = False
-    pdf_content = None
-    pdf_content_length = 0
-    file_path = ""
-    if has_fulltext and fulltext_urls:
-        logging.info(f"Attempting to download PDF for DOI {doi} from Unpaywall URLs: {fulltext_urls}")
-        downloaded, pdf_content, pdf_content_length, file_path = download_pdf(doi, fulltext_urls, save_to_disk, download_dir, identifier, title)
-    if not downloaded and pdf_url:
-        logging.info(f"Unpaywall failed or no URL, attempting to download PDF for DOI {doi} from OpenAlex PDF URL: {pdf_url}")
-        downloaded, pdf_content, pdf_content_length, file_path = download_pdf(doi, [pdf_url], save_to_disk, download_dir, identifier, title)
-    if not downloaded and url:
-        logging.info(f"No PDF URL available, attempting to download PDF for DOI {doi} from OpenAlex landing page URL: {url}")
-        downloaded, pdf_content, pdf_content_length, file_path = download_pdf(doi, [url], save_to_disk, download_dir, identifier, title)
-    if not downloaded:
-        logging.info(f"No download succeeded for DOI {doi}: has_fulltext={has_fulltext}, fulltext_urls={fulltext_urls}, openalex_pdf_url={pdf_url}, landing_page_url={url}")
-    
-    text = extract_text_from_pdf(pdf_content) if downloaded else ""
-    doc_cache = {}
-    
-    data_availability, data_links, _ = analyze_data_availability(text, doc_cache)
-    data_section_text = find_section(text, keywords["data_availability"], ["ORCID", "References", "Acknowledgments", "Conflict of Interest", "Author Contributions"])
-    
-    code_availability, _ = analyze_code_availability(text, doc_cache, data_section_text)
-    
-    # Search for additional data links if none found
-    additional_data_links = []
-    session = requests.Session()
-    landing_pages = [url] if url else []
-    if fulltext_urls:
-        landing_pages.extend([u for u in fulltext_urls if not u.endswith(".pdf") and len(u) <= MAX_URL_LENGTH])
-    
-    landing_pages.extend([link for link in data_links if link.startswith(('http://', 'https://')) and len(link) <= MAX_URL_LENGTH])
-    seen = set()
-    landing_pages = [page for page in landing_pages if not (page in seen or seen.add(page))]
-    
-    for landing_page in landing_pages:
-        if is_data_related_url(landing_page, target_formats):
-            new_links = find_data_urls(landing_page, session, [ext.lstrip('.') for ext in target_formats])
-            additional_data_links.extend([link for link in new_links if len(link) <= MAX_URL_LENGTH])
-    
-    all_data_links = list(set(data_links + additional_data_links))
-    logging.info(f"All data links for DOI {doi}: {all_data_links}")
-
-    # Download data files
-    downloaded_data_files = []
-    create_data_download_dir(data_download_dir)
-    for link in all_data_links:
-        file_path = download_data_file(link, doi, data_download_dir, target_formats, identifier, title)
-        if file_path:
-            downloaded_data_files.append(file_path)
-    
-    # Analyze metadata with downloaded files
-    data_metadata = analyze_data_metadata(all_data_links, downloaded_data_files) if all_data_links else {
-        "format": "",
-        "repository": "",
-        "repository_url": "",
-        "download_status": False,
-        "data_download_path": "",
-        "data_size": 0.0,
-        "number_of_files": 0,
-        "license": "Unknown"
-    }
-
+    # Oddpub-inspired extraction
+    oddpub_results = oddpub_extract_statements(sentences)
+    # Statement extraction (legacy: sentences containing 'data' or 'code')
+    data_statements = " ".join([s for s in sentences if "data" in s.lower()])
+    code_statements = " ".join([s for s in sentences if "code" in s.lower()])
+    # URL/DOI/accession extraction
+    all_urls = extract_urls_from_text(text)
+    data_urls = [u for u in all_urls if any(domain in u for domain in ["zenodo", "dryad", "figshare", "dataverse", "osf", "pangaea", "genbank"])]
+    code_urls = [u for u in all_urls if "github" in u]
+    dois = extract_dois_from_text(text)
+    accessions = extract_accessions_from_text(text)
     result = {
-        "identifier": identifier,
-        "doi": doi,
-        "title": title,
-        "authors": authors,
-        "published": published,
-        "url": url,
-        "journal": journal,
-        "has_fulltext": has_fulltext,
-        "is_oa": is_oa,
-        "downloaded": downloaded,
-        "path": file_path,
-        "pdf_content_length": pdf_content_length,
-        "data_links": all_data_links,
-        "downloaded_data_files": downloaded_data_files,
-        "data_availability_statements": data_availability,
-        "code_availability_statements": code_availability,
-        "format": data_metadata["format"],
-        "repository": data_metadata["repository"],
-        "repository_url": data_metadata["repository_url"],
-        "download_status": data_metadata["download_status"],
-        "data_download_path": data_metadata["data_download_path"],
-        "data_size": data_metadata["data_size"],
-        "number_of_files": data_metadata["number_of_files"],
-        "license": data_metadata["license"]
+        "data_section": data_section,
+        "code_section": code_section,
+        "data_statements": data_statements,
+        "code_statements": code_statements,
+        "all_urls": all_urls,
+        "data_urls": data_urls,
+        "code_urls": code_urls,
+        "dois": dois,
+        "accessions": accessions,
+        # Oddpub-inspired
+        "data_statements_oddpub": oddpub_results["data_statements_oddpub"],
+        "code_statements_oddpub": oddpub_results["code_statements_oddpub"]
     }
-    logging.debug(f"Completed processing for DOI: {doi}")
     return result
 
-def process_dois(doi_list, save_to_disk=True, email=None, download_dir=DOWNLOAD_DIR, data_download_dir=DATA_DOWNLOAD_DIR, target_formats=DEFAULT_DATA_FORMATS):
-    """Process list of DOIs and generate output table using parallel processing."""
-    if save_to_disk:
-        create_download_dir(download_dir)
-    
-    args = [
-        (
-            doi,
-            save_to_disk,
-            email,
-            download_dir,
-            data_download_dir,
-            target_formats,
-            f"{idx + 1:03d}",
-            "unknown"
+def full_pipeline_search_and_extract(query: str, top_n: int = 3, save_pdfs: bool = True, openalex_email: str = None) -> list:
+    """
+    Full pipeline: search OpenAlex for papers by query, download PDFs, extract text and information.
+    Returns a list of dicts with metadata, extraction results, and file paths.
+    """
+    from pyalex import Works
+    results = []
+    works = Works().search(query).get()
+    if not works:
+        logger.warning(f"No results found for query: {query}")
+        return results
+    for i, work in enumerate(works[:top_n]):
+        doi = work.get("doi")
+        title = work.get("title", "")
+        authors = ", ".join([auth["author"]["display_name"] for auth in work.get("authorships", [])])
+        published = work.get("publication_date", "")
+        host_venue = work.get("host_venue", {})
+        journal = host_venue.get("display_name", "")
+        pdf_url = work.get("open_access", {}).get("oa_url")
+        landing_url = host_venue.get("url", "")
+        # Try to get PDF URLs (OpenAlex, Unpaywall, landing page)
+        pdf_urls = []
+        if pdf_url:
+            pdf_urls.append(pdf_url)
+        # Try Unpaywall if no PDF URL
+        if not pdf_urls and doi:
+            try:
+                is_oa, has_fulltext, unpaywall_urls = get_unpaywall_data(doi, email=openalex_email)
+                pdf_urls.extend(unpaywall_urls)
+            except Exception as e:
+                logger.warning(f"Unpaywall lookup failed for DOI {doi}: {e}")
+        # Try landing page scraping if still no PDF URL
+        if not pdf_urls and landing_url:
+            session = requests.Session()
+            alt_pdf = find_pdf_url_from_landing_page(landing_url, session)
+            if alt_pdf:
+                pdf_urls.append(alt_pdf)
+        # Download PDF
+        pdf_success, pdf_content, pdf_size, pdf_path = download_pdf(
+            doi or f"no-doi-{i}", pdf_urls, save_to_disk=save_pdfs, identifier=f"{i+1:03}", title=title
         )
-        for idx, doi in enumerate(doi_list)
-    ]
-    
-    from multiprocessing import Pool
-    with Pool(processes=4) as pool:  # Limit to 4 processes to reduce resource strain
-        results = list(tqdm(pool.imap(process_doi_wrapper, args), total=len(doi_list), desc="Processing DOIs"))
-    
-    results = [r for r in results if r is not None]
-    return pd.DataFrame(results)
+        text = extract_text_from_pdf(pdf_content) if pdf_success else None
+        extraction = extract_all_information(text) if text else None
+        results.append({
+            "doi": doi,
+            "title": title,
+            "authors": authors,
+            "published": published,
+            "journal": journal,
+            "landing_url": landing_url,
+            "pdf_urls": pdf_urls,
+            "pdf_path": pdf_path if pdf_success else None,
+            "pdf_size": pdf_size if pdf_success else None,
+            "extracted_text_length": len(text) if text else 0,
+            "extraction": extraction,
+        })
+    return results
 
-def process_and_analyze_dois(input_file=None, dois=None, save_to_disk=True, email=None, download_dir=DOWNLOAD_DIR, data_download_dir=DATA_DOWNLOAD_DIR, target_formats=DEFAULT_DATA_FORMATS):
-    """Process DOIs, download PDFs, extract text, and analyze data and code availability."""
-    if input_file:
-        df = pd.read_csv(input_file)
-        doi_list = df["doi"].tolist()
-    elif dois:
-        doi_list = dois
+# Oddpub-inspired: use expanded keywords from keywords.py
+from ecoopen.keywords import DATA_AVAILABILITY_KEYWORDS, CODE_AVAILABILITY_KEYWORDS
+
+ODDPUB_DATA_AVAILABILITY = [k.lower() for k in DATA_AVAILABILITY_KEYWORDS]
+ODDPUB_CODE_AVAILABILITY = [k.lower() for k in CODE_AVAILABILITY_KEYWORDS]
+
+ODDPUB_REPOSITORIES = [
+    "zenodo", "figshare", "dryad", "dataverse", "osf", "pangaea", "genbank", "github", "bitbucket", "gitlab",
+    "ncbi", "ebi", "arrayexpress", "ega", "pride", "proteomexchange", "openneuro", "neurovault", "kaggle"
+]
+ODDPUB_FILE_FORMATS = [
+    ".csv", ".tsv", ".txt", ".xlsx", ".xls", ".zip", ".rar", ".tar.gz", ".json", ".xml", ".hdf5", ".mat"
+]
+ODDPUB_ACCESSION_PATTERNS = [
+    r"PRJNA\d{6,}", r"SRR\d{6,}", r"GSE\d{6,}", r"GSM\d{6,}", r"EGAS\d{6,}", r"EGAD\d{6,}",
+    r"ENA\d{6,}", r"E-MTAB-\d{3,}", r"PXD\d{6,}", r"SAMN\d{6,}", r"DRR\d{6,}", r"ERR\d{6,}",
+    r"SRX\d{6,}", r"ERX\d{6,}", r"DRX\d{6,}", r"SRS\d{6,}", r"ERS\d{6,}", r"DRS\d{6,}"
+]
+
+__all__ = [
+    "clean_text",
+    "truncate_statement",
+    "validate_doi",
+    "extract_all_information",
+    "extract_urls_from_text",
+    "extract_dois_from_text",
+    "extract_accessions_from_text",
+    "score_data_statement",
+    "full_pipeline_search_and_extract",
+    "oddpub_extract_statements",
+]
+
+def oddpub_find_section_indices(sentences: List[str], section_keywords: List[str]) -> List[int]:
+    """Return indices of sentences that are section headers matching any keyword."""
+    indices = []
+    for i, s in enumerate(sentences):
+        s_clean = s.lower().strip()
+        for kw in section_keywords:
+            if s_clean.startswith(kw):
+                indices.append(i)
+    return indices
+
+def oddpub_extract_section(sentences: List[str], section_keywords: List[str], max_section_len: int = 10) -> List[str]:
+    """Extract sentences from the first matching section (up to max_section_len sentences)."""
+    indices = oddpub_find_section_indices(sentences, section_keywords)
+    if not indices:
+        return []
+    start = indices[0]
+    # Section ends at next section header or after max_section_len sentences
+    for end in range(start+1, min(start+max_section_len+1, len(sentences))):
+        if any(sentences[end].lower().startswith('<section>') or sentences[end].lower().startswith('section') for _ in [0]):
+            return sentences[start:end]
+    return sentences[start:start+max_section_len]
+
+def oddpub_sentence_matches(sentence: str, keyword_lists: List[List[str]], require_all: bool = True) -> bool:
+    """Return True if the sentence matches all (or any) keyword lists (case-insensitive substring match)."""
+    s = sentence.lower()
+    if require_all:
+        return all(any(kw in s for kw in kwlist) for kwlist in keyword_lists)
     else:
-        raise ValueError("Provide either input_file or dois")
-    
-    df = process_dois(doi_list, save_to_disk, email, download_dir, data_download_dir, target_formats)
-    output_file = "ecoopen_output.csv"
-    df.to_csv(output_file, index=False, sep=';')
-    logging.info(f"Output saved to {output_file}")
-    return df
+        return any(any(kw in s for kw in kwlist) for kwlist in keyword_lists)
+
+def oddpub_extract_statements(sentences: List[str]) -> dict:
+    """Oddpub-style extraction: prioritize DAS/CAS sections, then scan all sentences for data/code availability."""
+    # Section-aware extraction
+    das_section = oddpub_extract_section(sentences, ODDPUB_DATA_AVAILABILITY)
+    cas_section = oddpub_extract_section(sentences, ODDPUB_CODE_AVAILABILITY)
+    # Fallback: scan all sentences
+    data_statements = []
+    code_statements = []
+    for s in sentences:
+        if oddpub_sentence_matches(s, [ODDPUB_DATA_AVAILABILITY, ODDPUB_REPOSITORIES], require_all=True):
+            data_statements.append(s)
+        if oddpub_sentence_matches(s, [ODDPUB_CODE_AVAILABILITY, ODDPUB_REPOSITORIES], require_all=True):
+            code_statements.append(s)
+    # Prefer section if found, else use fallback
+    data_result = das_section if das_section else data_statements
+    code_result = cas_section if cas_section else code_statements
+    return {
+        "data_statements_oddpub": data_result,
+        "code_statements_oddpub": code_result
+    }

@@ -1,7 +1,10 @@
 import argparse
-from ecoopen.ecoopen import process_and_analyze_dois, DEFAULT_DATA_FORMATS  # Absolute import
+from ecoopen.ecoopen import process_and_analyze_dois, DEFAULT_DATA_FORMATS
+import logging
 
-def main():
+logger = logging.getLogger(__name__)
+
+def main() -> None:
     """Command-line interface for ecoopen package."""
     parser = argparse.ArgumentParser(
         description="Process DOIs to download PDFs, extract text, and analyze data and code availability statements."

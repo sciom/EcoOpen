@@ -1,0 +1,16 @@
+# LLM-based extraction requirements
+# Add these to your main requirements.txt or install separately
+
+# Core LLM and vector database
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langchain-ollama>=0.1.0
+langchain-chroma>=0.1.0
+chromadb>=0.4.0
+
+# Document processing
+pypdf>=3.0.0
+
+# Optional: for better performance
+numpy>=1.24.0

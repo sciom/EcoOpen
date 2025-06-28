@@ -23,6 +23,16 @@ from ecoopen.constants import USER_AGENTS, MAX_URL_LENGTH, MAX_STATEMENT_LENGTH
 
 logger = logging.getLogger(__name__)
 
+# Try to import LLM extractor (optional dependency)
+try:
+    from ecoopen.llm_extractor import extract_all_information_llm, LLMDataExtractor
+    LLM_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"LLM extractor not available: {e}")
+    LLM_AVAILABLE = False
+    extract_all_information_llm = None
+    LLMDataExtractor = None
+
 # Configuration
 DOWNLOAD_DIR = "./downloads"
 DATA_DOWNLOAD_DIR = "./data_downloads"
@@ -571,11 +581,31 @@ def score_data_statement(statement: str, category: str) -> int:
     score += repo_count * 5
     return score
 
-def extract_all_information(text: str) -> dict:
+def extract_all_information(text: str, method: str = "keyword") -> dict:
     """
     Extract all relevant information (data/code availability, DOIs, URLs, accessions, etc.) from text.
-    Returns a dictionary with all detected items, including Oddpub-inspired logic.
+    
+    Args:
+        text: Input text to analyze
+        method: Extraction method - "keyword" (default), "llm", or "both"
+    
+    Returns:
+        Dictionary with all detected items
     """
+    if method == "llm" and LLM_AVAILABLE:
+        logger.info("Using LLM-based extraction")
+        # For LLM method, we need PDF content, not just text
+        # This is a limitation - we'll note it in the result
+        return {
+            "extraction_method": "llm",
+            "error": "LLM extraction requires PDF content, not plain text. Use extract_all_information_from_pdf_llm() instead.",
+            "text_provided": True,
+            "text_length": len(text)
+        }
+    
+    # Default keyword-based extraction
+    logger.info("Using keyword-based extraction")
+    
     # Section detection (simple version)
     data_section = text
     code_section = text
@@ -593,7 +623,9 @@ def extract_all_information(text: str) -> dict:
     code_urls = [u for u in all_urls if "github" in u]
     dois = extract_dois_from_text(text)
     accessions = extract_accessions_from_text(text)
+    
     result = {
+        "extraction_method": "keyword",
         "data_section": data_section,
         "code_section": code_section,
         "data_statements": data_statements,
@@ -607,6 +639,11 @@ def extract_all_information(text: str) -> dict:
         "data_statements_oddpub": oddpub_results["data_statements_oddpub"],
         "code_statements_oddpub": oddpub_results["code_statements_oddpub"]
     }
+    
+    if method == "both" and LLM_AVAILABLE:
+        logger.info("Both methods requested, but LLM requires PDF content")
+        result["llm_note"] = "LLM extraction requires PDF content, not plain text"
+    
     return result
 
 def full_pipeline_search_and_extract(query: str, top_n: int = 3, save_pdfs: bool = True, openalex_email: str = None) -> list:
@@ -749,3 +786,70 @@ def oddpub_extract_statements(sentences: List[str]) -> dict:
         "data_statements_oddpub": data_result,
         "code_statements_oddpub": code_result
     }
+
+def extract_all_information_from_pdf_llm(pdf_content: bytes, method: str = "llm") -> dict:
+    """
+    Extract all relevant information from PDF using LLM-based analysis.
+    
+    Args:
+        pdf_content: PDF file content as bytes
+        method: Extraction method - "llm", "keyword", or "both"
+    
+    Returns:
+        Dictionary with extracted information
+    """
+    if method == "llm" and LLM_AVAILABLE:
+        logger.info("Using LLM-based extraction for PDF")
+        return extract_all_information_llm(pdf_content)
+    
+    elif method == "keyword" or not LLM_AVAILABLE:
+        logger.info("Using keyword-based extraction for PDF")
+        # Extract text first, then use keyword extraction
+        text = extract_text_from_pdf(pdf_content)
+        if text:
+            return extract_all_information(text, method="keyword")
+        else:
+            return {"error": "Failed to extract text from PDF", "extraction_method": "keyword"}
+    
+    elif method == "both" and LLM_AVAILABLE:
+        logger.info("Using both extraction methods for PDF")
+        # Run both extractions
+        llm_result = extract_all_information_llm(pdf_content)
+        
+        # Also run keyword extraction
+        text = extract_text_from_pdf(pdf_content)
+        if text:
+            keyword_result = extract_all_information(text, method="keyword")
+        else:
+            keyword_result = {"error": "Failed to extract text for keyword analysis"}
+        
+        # Combine results
+        combined_result = {
+            "extraction_method": "both",
+            "llm_results": llm_result,
+            "keyword_results": keyword_result,
+            "comparison": {
+                "llm_success": llm_result.get("success", False),
+                "keyword_success": "error" not in keyword_result,
+                "llm_found_data": False,
+                "keyword_found_data": False
+            }
+        }
+        
+        # Add comparison metrics
+        if llm_result.get("success") and "availability_info" in llm_result:
+            availability = llm_result["availability_info"]
+            if isinstance(availability, dict):
+                combined_result["comparison"]["llm_found_data"] = availability.get("data_availability", {}).get("found", False)
+        
+        if "data_statements" in keyword_result:
+            combined_result["comparison"]["keyword_found_data"] = len(keyword_result.get("data_statements", "").strip()) > 0
+        
+        return combined_result
+    
+    else:
+        return {
+            "error": "LLM extraction not available. Install LLM dependencies with: pip install -r requirements_llm.txt",
+            "extraction_method": method,
+            "llm_available": LLM_AVAILABLE
+        }

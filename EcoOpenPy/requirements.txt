@@ -1,8 +1,16 @@
-pandas>=2.0.0
+# EcoOpen Simplified - LLM Dependencies
+# Install with: pip install -r requirements_simple.txt
+
+# Core dependencies
+pandas>=1.5.0
 requests>=2.28.0
-spacy>=3.0.0
-pyalex>=0.12.0
-beautifulsoup4>=4.11.0
-tqdm>=4.65.0
-PyMuPDF>=1.20.0
-ratelimit>=2.2.1
+PyMuPDF>=1.23.0
+tqdm>=4.64.0
+
+# LLM and Vector Database
+langchain>=0.1.0
+langchain-ollama>=0.1.0
+langchain-community>=0.0.20
+langchain-chroma>=0.1.0
+chromadb>=0.4.0
+pypdf>=3.0.0

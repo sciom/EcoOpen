@@ -1,0 +1,3 @@
+# Streamlit GUI requirements for EcoOpen
+streamlit>=1.28.0
+plotly>=5.15.0

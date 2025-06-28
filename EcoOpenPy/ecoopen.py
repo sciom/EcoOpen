@@ -69,17 +69,14 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
-# Use auto-detection for optimal model selection
+# Use auto-detection for optimal phi model selection (phi4 preferred, phi3:mini fallback)
 DEFAULT_LLM_MODEL = None  # Will be auto-detected
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
 
-# Hardware-optimized model recommendations
+# Phi model recommendations (phi models only for best compatibility)
 HARDWARE_OPTIMIZED_MODELS = [
-    {"name": "phi3:mini", "size_gb": 3.8, "quality": "very_good", "speed": "fast", "min_vram": 4.5},
-    {"name": "qwen2.5:3b", "size_gb": 1.9, "quality": "excellent", "speed": "very_fast", "min_vram": 2.5},
-    {"name": "llama3.2:3b", "size_gb": 2.0, "quality": "good", "speed": "very_fast", "min_vram": 2.5},
-    {"name": "gemma2:2b", "size_gb": 1.6, "quality": "basic", "speed": "fastest", "min_vram": 2.0},
     {"name": "phi4", "size_gb": 10.0, "quality": "excellent", "speed": "slow", "min_vram": 12.0},
+    {"name": "phi3:mini", "size_gb": 3.8, "quality": "very_good", "speed": "fast", "min_vram": 4.5},
 ]
 
 def get_gpu_memory() -> float:
@@ -109,64 +106,70 @@ def get_gpu_memory() -> float:
     return 4.0  # Assume 4GB as conservative default
 
 def get_optimal_model(available_vram_gb: float) -> str:
-    """Get the best model for available hardware."""
-    logger.info(f"Detecting optimal model for {available_vram_gb:.1f}GB VRAM...")
+    """Get the best phi model for available hardware (phi4 preferred, phi3:mini fallback)."""
+    logger.info(f"Detecting optimal phi model for {available_vram_gb:.1f}GB VRAM...")
     
-    # Filter models that fit in VRAM (with some buffer)
-    suitable_models = [
-        model for model in HARDWARE_OPTIMIZED_MODELS 
-        if model["min_vram"] <= available_vram_gb
+    # Phi model preferences: phi4 first, then phi3:mini as fallback
+    phi_models = [
+        {"name": "phi4", "size_gb": 10.0, "quality": "excellent", "speed": "slow", "min_vram": 12.0},
+        {"name": "phi3:mini", "size_gb": 3.8, "quality": "very_good", "speed": "fast", "min_vram": 4.5}
     ]
     
-    if not suitable_models:
-        # If no model fits, use the smallest one
-        smallest = min(HARDWARE_OPTIMIZED_MODELS, key=lambda x: x["size_gb"])
-        logger.warning(f"⚠️  No model fits perfectly in {available_vram_gb:.1f}GB VRAM")
-        logger.warning(f"   Using smallest model: {smallest['name']} ({smallest['size_gb']}GB)")
-        return smallest["name"]
+    # Try phi4 first if we have enough VRAM
+    if available_vram_gb >= 12.0:
+        logger.info("✅ Sufficient VRAM for phi4 - using highest quality model")
+        logger.info(f"   Selected: phi4 (10GB, excellent quality)")
+        return "phi4"
     
-    # Sort by quality first, then by speed
-    quality_order = {"excellent": 4, "very_good": 3, "good": 2, "basic": 1}
-    speed_order = {"fastest": 4, "very_fast": 3, "fast": 2, "slow": 1}
+    # Fallback to phi3:mini if not enough VRAM for phi4
+    elif available_vram_gb >= 4.5:
+        logger.info("⚠️  Insufficient VRAM for phi4, falling back to phi3:mini")
+        logger.info(f"   Selected: phi3:mini (3.8GB, very good quality)")
+        return "phi3:mini"
     
-    best_model = max(suitable_models, key=lambda x: (
-        quality_order.get(x["quality"], 0),
-        speed_order.get(x["speed"], 0)
-    ))
-    
-    logger.info(f"✅ Optimal model selected: {best_model['name']}")
-    logger.info(f"   Size: {best_model['size_gb']}GB, Quality: {best_model['quality']}, Speed: {best_model['speed']}")
-    
-    return best_model["name"]
+    # If even phi3:mini won't fit, warn but still use it (will run on CPU)
+    else:
+        logger.warning(f"⚠️  Limited VRAM ({available_vram_gb:.1f}GB) - phi3:mini may run slowly on CPU")
+        logger.warning(f"   Selected: phi3:mini (fallback, may use CPU)")
+        return "phi3:mini"
 
 def auto_detect_best_model() -> str:
-    """Automatically detect and return the best model for current hardware."""
-    # Always use phi3:mini as the most reliable model
-    fallback_model = "phi3:mini"
-    
+    """Automatically detect and return the best phi model for current hardware."""
     try:
-        # Check if phi3:mini is available
+        # Get available VRAM and select optimal model
+        available_vram = get_gpu_memory()
+        optimal_model = get_optimal_model(available_vram)
+        
+        # Check if the optimal model is available locally
         result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             available_models = result.stdout.lower()
-            if "phi3:mini" in available_models:
-                logger.info("✅ Using phi3:mini (most reliable model)")
-                return "phi3:mini"
+            
+            # Check if optimal model is available
+            if optimal_model.lower() in available_models:
+                logger.info(f"✅ Using {optimal_model} (optimal for your hardware)")
+                return optimal_model
             else:
-                logger.info("📥 phi3:mini not found locally")
-                logger.info("   Install with: ollama pull phi3:mini")
+                logger.info(f"📥 {optimal_model} not found locally")
+                logger.info(f"   Install with: ollama pull {optimal_model}")
                 
-                # Check if any other models are available as backup
-                for model in HARDWARE_OPTIMIZED_MODELS:
-                    if model["name"].lower() in available_models:
-                        logger.info(f"✅ Using available model: {model['name']} (backup)")
-                        return model["name"]
+                # Check for fallback models
+                if optimal_model == "phi4" and "phi3:mini" in available_models:
+                    logger.info("✅ Using phi3:mini (fallback available)")
+                    return "phi3:mini"
+                elif "phi3:mini" in available_models:
+                    logger.info("✅ Using phi3:mini (available)")
+                    return "phi3:mini"
+                elif "phi4" in available_models:
+                    logger.info("✅ Using phi4 (available)")
+                    return "phi4"
         
     except Exception as e:
         logger.warning(f"Could not check available models: {e}")
     
-    logger.info(f"⚠️  Falling back to {fallback_model}")
-    return fallback_model
+    # Final fallback
+    logger.info("⚠️  Falling back to phi3:mini (default)")
+    return "phi3:mini"
 
 def check_ollama_performance() -> Dict[str, Any]:
     """Check Ollama model performance and provide optimization suggestions."""
@@ -272,7 +275,7 @@ class LLMExtractor:
         self.chroma_client = None
         logger.info(f"LLM extractor initialized with {llm_model}")
 
-    def extract_from_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
+    def extract_from_pdf(self, pdf_content: bytes, allowed_formats: List[str] = None) -> Dict[str, Any]:
         """Extract availability and metadata from PDF using DOI + OpenAlex + LLM."""
         logger.info("Starting extraction with DOI + OpenAlex + LLM...")
         start_time = time.time()
@@ -303,7 +306,7 @@ class LLMExtractor:
             # Get more text for URL extraction
             all_docs = vectorstore.similarity_search("data code repository github zenodo figshare", k=20)
             full_text = "\n\n".join([doc.page_content for doc in all_docs])
-            data_urls = extract_data_urls_from_text(full_text)
+            data_urls = extract_data_urls_from_text(full_text, allowed_formats)
             
             # Add data URLs to availability results
             if 'data_links' not in availability:
@@ -831,25 +834,68 @@ def fetch_openalex_metadata(doi: str) -> Dict[str, Any]:
         return {}
 
 # =============================================================================
-# Data Downloading Module
+# Enhanced Data Downloading Module
 # =============================================================================
 
-def extract_data_urls_from_text(text: str) -> List[str]:
-    """Extract potential data URLs from text."""
+# Supported data formats categorized by type
+DATA_FORMATS = {
+    'tabular': ['csv', 'tsv', 'xlsx', 'xls', 'ods'],
+    'text': ['txt', 'json', 'xml', 'yaml', 'yml'],
+    'scientific': ['nc', 'hdf5', 'h5', 'mat', 'npz', 'fits'],
+    'archives': ['zip', 'tar.gz', 'tar.bz2', 'rar', '7z'],
+    'images': ['png', 'jpg', 'jpeg', 'tiff', 'gif', 'svg'],
+    'code': ['py', 'r', 'ipynb', 'js', 'cpp', 'java', 'sh'],
+    'documents': ['pdf', 'doc', 'docx', 'rtf', 'tex'],
+    'other': ['dat', 'bin', 'log']
+}
+
+def get_file_format_category(file_extension: str) -> str:
+    """Determine the category of a file based on its extension."""
+    file_extension = file_extension.lower().lstrip('.')
+    
+    for category, extensions in DATA_FORMATS.items():
+        if file_extension in extensions:
+            return category
+    return 'other'
+
+def extract_data_urls_from_text(text: str, allowed_formats: List[str] = None) -> List[str]:
+    """Extract potential data URLs from text with optional format filtering."""
     urls = []
     
-    # Common data repository patterns
-    url_patterns = [
-        r'https?://[^\s\]]+\.(?:csv|xlsx?|json|zip|tar\.gz|gz|dat|txt|nc|hdf5?|mat)',  # File extensions
+    # Build file extension pattern based on allowed formats
+    if allowed_formats:
+        # Get all extensions for the allowed format categories
+        allowed_extensions = []
+        for format_cat in allowed_formats:
+            if format_cat in DATA_FORMATS:
+                allowed_extensions.extend(DATA_FORMATS[format_cat])
+        
+        # Create pattern for specific extensions
+        ext_pattern = '|'.join(re.escape(ext) for ext in allowed_extensions)
+        file_patterns = [
+            f'https?://[^\\s\\]]+\\.(?:{ext_pattern})',
+        ]
+    else:
+        # Default patterns for all file types
+        file_patterns = [
+            r'https?://[^\s\]]+\.(?:csv|tsv|xlsx?|xls|json|xml|zip|tar\.gz|gz|dat|txt|nc|hdf5?|h5|mat|npz|py|r|ipynb)',
+        ]
+    
+    # Repository and data platform patterns (always included)
+    repo_patterns = [
         r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)/[^\s\]]+',  # Code repositories
         r'https?://(?:www\.)?(?:zenodo\.org|figshare\.com|dryad\.org)/[^\s\]]+',  # Data repositories
         r'https?://(?:www\.)?(?:dataverse\.harvard\.edu|data\.mendeley\.com)/[^\s\]]+',  # Academic data
         r'https?://[^\s\]]*(?:dataset|data|download|repository)[^\s\]]*',  # Generic data URLs
     ]
     
-    logger.debug(f"Searching for data URLs in text ({len(text)} chars)...")
+    all_patterns = file_patterns + repo_patterns
     
-    for pattern in url_patterns:
+    logger.debug(f"Searching for data URLs in text ({len(text)} chars)...")
+    if allowed_formats:
+        logger.debug(f"Filtering for formats: {allowed_formats}")
+    
+    for pattern in all_patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
             # Clean up URL
@@ -864,13 +910,54 @@ def extract_data_urls_from_text(text: str) -> List[str]:
     
     return urls
 
-def download_data_file(url: str, download_dir: str, max_size_mb: int = 100) -> Dict[str, Any]:
-    """Download a data file from URL with size limit."""
+def classify_url_by_content_type(url: str) -> Dict[str, Any]:
+    """Classify URL by making a HEAD request to check content type."""
+    try:
+        head_response = requests.head(url, timeout=10, allow_redirects=True)
+        content_type = head_response.headers.get('content-type', '').lower()
+        content_length = head_response.headers.get('content-length')
+        
+        # Extract file extension from URL
+        parsed_url = urlparse(url)
+        file_ext = Path(parsed_url.path).suffix.lower().lstrip('.')
+        
+        classification = {
+            'url': url,
+            'content_type': content_type,
+            'file_extension': file_ext,
+            'format_category': get_file_format_category(file_ext),
+            'size_bytes': int(content_length) if content_length else None,
+            'accessible': head_response.status_code == 200
+        }
+        
+        return classification
+        
+    except Exception as e:
+        logger.debug(f"Could not classify URL {url}: {e}")
+        return {
+            'url': url,
+            'content_type': 'unknown',
+            'file_extension': '',
+            'format_category': 'other',
+            'size_bytes': None,
+            'accessible': False
+        }
+
+def download_data_file(url: str, download_dir: str, max_size_mb: int = 100, 
+                      allowed_formats: List[str] = None) -> Dict[str, Any]:
+    """Download a data file from URL with size limit and format filtering."""
     try:
         download_path = Path(download_dir)
         download_path.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"📥 Attempting to download: {url}")
+        
+        # Classify URL first if format filtering is enabled
+        if allowed_formats:
+            classification = classify_url_by_content_type(url)
+            if classification['format_category'] not in allowed_formats:
+                logger.info(f"   Skipping {url}: format '{classification['format_category']}' not in allowed formats")
+                return {'success': False, 'error': f"Format '{classification['format_category']}' not allowed"}
         
         # Head request to check file size
         try:
@@ -920,7 +1007,10 @@ def download_data_file(url: str, download_dir: str, max_size_mb: int = 100) -> D
                         return {'success': False, 'error': f'Download exceeded size limit'}
         
         size_mb = total_size / (1024 * 1024)
-        logger.info(f"✅ Successfully downloaded: {filename} ({size_mb:.2f}MB)")
+        file_ext = Path(filename).suffix.lower().lstrip('.')
+        format_category = get_file_format_category(file_ext)
+        
+        logger.info(f"✅ Successfully downloaded: {filename} ({size_mb:.2f}MB, {format_category})")
         
         return {
             'success': True,
@@ -928,7 +1018,9 @@ def download_data_file(url: str, download_dir: str, max_size_mb: int = 100) -> D
             'filename': filename,
             'size_bytes': total_size,
             'size_mb': size_mb,
-            'url': url
+            'url': url,
+            'format_category': format_category,
+            'file_extension': file_ext
         }
         
     except requests.exceptions.RequestException as e:
@@ -938,12 +1030,15 @@ def download_data_file(url: str, download_dir: str, max_size_mb: int = 100) -> D
         logger.error(f"   Download error: {e}")
         return {'success': False, 'error': str(e)}
 
-def download_paper_data(data_urls: List[str], download_dir: str, max_files: int = 5) -> List[Dict[str, Any]]:
-    """Download data files from a list of URLs."""
+def download_paper_data(data_urls: List[str], download_dir: str, max_files: int = 5, 
+                       allowed_formats: List[str] = None, max_size_mb: int = 100) -> List[Dict[str, Any]]:
+    """Download data files from a list of URLs with format filtering."""
     if not data_urls:
         return []
     
     logger.info(f"📦 Starting data download for {len(data_urls)} URLs...")
+    if allowed_formats:
+        logger.info(f"🎯 Filtering for formats: {', '.join(allowed_formats)}")
     
     download_results = []
     downloaded_count = 0
@@ -953,14 +1048,24 @@ def download_paper_data(data_urls: List[str], download_dir: str, max_files: int 
             logger.info(f"   Reached maximum download limit ({max_files} files)")
             break
         
-        result = download_data_file(url, download_dir)
+        result = download_data_file(url, download_dir, max_size_mb, allowed_formats)
         download_results.append(result)
         
         if result['success']:
             downloaded_count += 1
     
     success_count = sum(1 for r in download_results if r['success'])
+    
+    # Summarize by format
+    format_summary = {}
+    for result in download_results:
+        if result['success']:
+            fmt = result.get('format_category', 'unknown')
+            format_summary[fmt] = format_summary.get(fmt, 0) + 1
+    
     logger.info(f"📊 Download summary: {success_count}/{len(data_urls)} files downloaded successfully")
+    if format_summary:
+        logger.info(f"📁 Formats downloaded: {', '.join([f'{fmt}({count})' for fmt, count in format_summary.items()])}")
     
     return download_results
 
@@ -990,7 +1095,8 @@ def find_pdf_files(folder_path: str, recursive: bool = False) -> List[str]:
 
 def process_pdf_folder_to_csv(folder_path: str, output_file: str = "ecoopen_output.csv",
                              recursive: bool = False, download_data: bool = False, 
-                             data_dir: str = "./data_downloads", max_data_files: int = 5) -> pd.DataFrame:
+                             data_dir: str = "./data_downloads", max_data_files: int = 5,
+                             allowed_formats: List[str] = None, max_size_mb: int = 100) -> pd.DataFrame:
     """Process all PDFs in a folder and save results to CSV."""
     
     # Find all PDF files
@@ -1005,6 +1111,9 @@ def process_pdf_folder_to_csv(folder_path: str, output_file: str = "ecoopen_outp
     if download_data:
         logger.info(f"Data files will be downloaded to: {data_dir}")
         logger.info(f"Max data files per paper: {max_data_files}")
+        if allowed_formats:
+            logger.info(f"Filtering for formats: {', '.join(allowed_formats)}")
+        logger.info(f"Max file size: {max_size_mb}MB")
     
     results = []
     successful = 0
@@ -1017,7 +1126,9 @@ def process_pdf_folder_to_csv(folder_path: str, output_file: str = "ecoopen_outp
                 pdf_path,
                 download_data=download_data,
                 data_dir=data_dir,
-                max_data_files=max_data_files
+                max_data_files=max_data_files,
+                allowed_formats=allowed_formats,
+                max_size_mb=max_size_mb
             )
             result['identifier'] = f"{i:03d}"
             result['path'] = pdf_path
@@ -1049,7 +1160,8 @@ def process_pdf_folder_to_csv(folder_path: str, output_file: str = "ecoopen_outp
     return df
 
 def process_single_pdf_file(pdf_path: str, download_data: bool = False, 
-                           data_dir: str = "./data_downloads", max_data_files: int = 5) -> Dict[str, Any]:
+                           data_dir: str = "./data_downloads", max_data_files: int = 5,
+                           allowed_formats: List[str] = None, max_size_mb: int = 100) -> Dict[str, Any]:
     """Process a single PDF file with DOI extraction and OpenAlex integration."""
     if not LLM_AVAILABLE:
         raise ImportError("LLM dependencies required for PDF processing")
@@ -1113,7 +1225,7 @@ def process_single_pdf_file(pdf_path: str, download_data: bool = False,
         logger.info("🤖 Starting LLM extraction...")
         model_name = globals().get('_current_model', 'phi3:mini')
         extractor = LLMExtractor(llm_model=model_name)
-        extraction = extractor.extract_from_pdf(pdf_content)
+        extraction = extractor.extract_from_pdf(pdf_content, allowed_formats)
         
         if extraction['success']:
             logger.info("✅ LLM extraction successful")
@@ -1184,7 +1296,9 @@ def process_single_pdf_file(pdf_path: str, download_data: bool = False,
                 download_results = download_paper_data(
                     unique_data_links, 
                     data_dir,
-                    max_data_files
+                    max_data_files,
+                    allowed_formats,
+                    max_size_mb
                 )
                 
                 # Update result with download info
@@ -1221,9 +1335,11 @@ def main():
     parser.add_argument('--data-dir', default='./data_downloads', help='Directory to save downloaded data files')
     parser.add_argument('--max-data-files', type=int, default=5, help='Maximum number of data files to download per paper')
     parser.add_argument('--max-file-size', type=int, default=100, help='Maximum file size to download (MB)')
+    parser.add_argument('--formats', nargs='*', choices=list(DATA_FORMATS.keys()), 
+                       help='Data formats to download (tabular, text, scientific, archives, images, code, documents, other)')
     parser.add_argument('--check-llm', action='store_true', help='Check LLM availability')
     parser.add_argument('--check-performance', action='store_true', help='Check Ollama performance and get optimization suggestions')
-    parser.add_argument('--model', default='phi3:mini', help='LLM model to use (default: phi3:mini for reliability)')
+    parser.add_argument('--model', default=None, help='LLM model to use (auto-detects phi4 or phi3:mini by default)')
     parser.add_argument('--list-models', action='store_true', help='List recommended models for your hardware')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging to see LLM responses')
     parser.add_argument('--recursive', action='store_true', help='Search for PDFs recursively in subfolders')
@@ -1231,7 +1347,13 @@ def main():
     args = parser.parse_args()
     
     # Store model choice globally for access in other functions
-    globals()['_current_model'] = args.model
+    if args.model is None:
+        # Auto-detect optimal phi model
+        globals()['_current_model'] = auto_detect_best_model()
+        logger.info(f"🤖 Auto-selected model: {globals()['_current_model']}")
+    else:
+        globals()['_current_model'] = args.model
+        logger.info(f"🤖 Using specified model: {args.model}")
     
     # Enable debug logging if requested
     if args.debug:
@@ -1309,7 +1431,9 @@ def main():
             args.pdf,
             download_data=args.download_data,
             data_dir=args.data_dir,
-            max_data_files=args.max_data_files
+            max_data_files=args.max_data_files,
+            allowed_formats=args.formats,
+            max_size_mb=args.max_file_size
         )
         
         print(json.dumps(result, indent=2))
@@ -1327,7 +1451,9 @@ def main():
             args.recursive,
             args.download_data,
             args.data_dir,
-            args.max_data_files
+            args.max_data_files,
+            args.formats,
+            args.max_file_size
         )
         
         pdf_count = len(df)

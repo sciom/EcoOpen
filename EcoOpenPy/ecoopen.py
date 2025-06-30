@@ -73,10 +73,9 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_LLM_MODEL = None  # Will be auto-detected
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
 
-# Phi model recommendations (phi models only for best compatibility)
+# Phi model recommendations - only phi4 for consistent quality
 HARDWARE_OPTIMIZED_MODELS = [
-    {"name": "phi4", "size_gb": 10.0, "quality": "excellent", "speed": "slow", "min_vram": 12.0},
-    {"name": "phi3:mini", "size_gb": 3.8, "quality": "very_good", "speed": "fast", "min_vram": 4.5},
+    {"name": "phi4", "size_gb": 10.0, "quality": "excellent", "speed": "moderate", "min_vram": 4.0},
 ]
 
 def get_gpu_memory() -> float:
@@ -106,70 +105,45 @@ def get_gpu_memory() -> float:
     return 4.0  # Assume 4GB as conservative default
 
 def get_optimal_model(available_vram_gb: float) -> str:
-    """Get the best phi model for available hardware (phi4 preferred, phi3:mini fallback)."""
-    logger.info(f"Detecting optimal phi model for {available_vram_gb:.1f}GB VRAM...")
+    """Always use phi4 for consistent quality - no fallbacks."""
+    logger.info(f"Using phi4 for consistent quality (detected {available_vram_gb:.1f}GB VRAM)")
     
-    # Phi model preferences: phi4 first, then phi3:mini as fallback
-    phi_models = [
-        {"name": "phi4", "size_gb": 10.0, "quality": "excellent", "speed": "slow", "min_vram": 12.0},
-        {"name": "phi3:mini", "size_gb": 3.8, "quality": "very_good", "speed": "fast", "min_vram": 4.5}
-    ]
-    
-    # Try phi4 first if we have enough VRAM
     if available_vram_gb >= 12.0:
-        logger.info("✅ Sufficient VRAM for phi4 - using highest quality model")
-        logger.info(f"   Selected: phi4 (10GB, excellent quality)")
-        return "phi4"
-    
-    # Fallback to phi3:mini if not enough VRAM for phi4
-    elif available_vram_gb >= 4.5:
-        logger.info("⚠️  Insufficient VRAM for phi4, falling back to phi3:mini")
-        logger.info(f"   Selected: phi3:mini (3.8GB, very good quality)")
-        return "phi3:mini"
-    
-    # If even phi3:mini won't fit, warn but still use it (will run on CPU)
+        logger.info("✅ Sufficient VRAM for phi4 - using GPU acceleration")
     else:
-        logger.warning(f"⚠️  Limited VRAM ({available_vram_gb:.1f}GB) - phi3:mini may run slowly on CPU")
-        logger.warning(f"   Selected: phi3:mini (fallback, may use CPU)")
-        return "phi3:mini"
+        logger.warning(f"⚠️  Limited VRAM ({available_vram_gb:.1f}GB) - phi4 will run on CPU (slower but consistent quality)")
+    
+    logger.info(f"   Selected: phi4 (10GB, excellent quality)")
+    return "phi4"
 
 def auto_detect_best_model() -> str:
-    """Automatically detect and return the best phi model for current hardware."""
+    """Always use phi4 for consistent quality."""
     try:
-        # Get available VRAM and select optimal model
+        # Get available VRAM for logging purposes
         available_vram = get_gpu_memory()
         optimal_model = get_optimal_model(available_vram)
         
-        # Check if the optimal model is available locally
+        # Check if phi4 is available locally
         result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             available_models = result.stdout.lower()
             
-            # Check if optimal model is available
-            if optimal_model.lower() in available_models:
-                logger.info(f"✅ Using {optimal_model} (optimal for your hardware)")
-                return optimal_model
+            # Check if phi4 is available
+            if "phi4" in available_models:
+                logger.info(f"✅ Using phi4 (available locally)")
+                return "phi4"
             else:
-                logger.info(f"📥 {optimal_model} not found locally")
-                logger.info(f"   Install with: ollama pull {optimal_model}")
-                
-                # Check for fallback models
-                if optimal_model == "phi4" and "phi3:mini" in available_models:
-                    logger.info("✅ Using phi3:mini (fallback available)")
-                    return "phi3:mini"
-                elif "phi3:mini" in available_models:
-                    logger.info("✅ Using phi3:mini (available)")
-                    return "phi3:mini"
-                elif "phi4" in available_models:
-                    logger.info("✅ Using phi4 (available)")
-                    return "phi4"
+                logger.info(f"📥 phi4 not found locally")
+                logger.info(f"   Install with: ollama pull phi4")
+                logger.info(f"   Proceeding with phi4 anyway (will auto-download)")
+                return "phi4"
         
     except Exception as e:
         logger.warning(f"Could not check available models: {e}")
     
-    # Final fallback
-    logger.info("⚠️  Falling back to phi3:mini (default)")
-    return "phi3:mini"
+    # Always return phi4
+    logger.info("Using phi4 for consistent quality")
+    return "phi4"
 
 def check_ollama_performance() -> Dict[str, Any]:
     """Check Ollama model performance and provide optimization suggestions."""
@@ -347,7 +321,7 @@ class LLMExtractor:
             }
 
     def _pdf_to_vectorstore(self, pdf_content: bytes) -> Chroma:
-        """Convert PDF to searchable vector store."""
+        """Convert PDF to searchable vector store with improved chunking for better structure preservation."""
         logger.info(f"Processing PDF ({len(pdf_content)} bytes)...")
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -360,34 +334,69 @@ class LLMExtractor:
             documents = loader.load()
             logger.info(f"✓ Loaded {len(documents)} pages")
 
-            # Split into chunks
-            logger.info("Splitting document into chunks...")
+            # Improved chunking strategy for better structure preservation
+            logger.info("Splitting document with structure-aware chunking...")
+            
+            # First, create larger chunks to preserve context
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000, 
-                chunk_overlap=200,
-                separators=["\n\n", "\n", ". ", " ", ""]
+                chunk_size=1500,  # Larger chunks for better context
+                chunk_overlap=300,  # More overlap to preserve relationships
+                separators=[
+                    "\n\n\n",  # Multiple line breaks (section separators)
+                    "\n\n",    # Paragraph breaks
+                    "\n",      # Line breaks
+                    ". ",      # Sentence breaks
+                    ", ",      # Clause breaks
+                    " "        # Word breaks
+                ],
+                keep_separator=True  # Keep separators to preserve structure
             )
             splits = text_splitter.split_documents(documents)
             logger.info(f"✓ Created {len(splits)} text chunks")
 
-            # Clean and prepare texts
-            logger.info("Preparing text for embedding...")
+            # Clean and prepare texts with enhanced metadata
+            logger.info("Preparing text for embedding with enhanced metadata...")
             texts = []
             metadatas = []
+            
             for i, doc in enumerate(splits):
                 if doc.page_content.strip():
-                    texts.append(str(doc.page_content))
+                    # Clean the text content
+                    clean_content = doc.page_content.strip()
+                    
+                    # Add position-based importance weighting
+                    page_num = doc.metadata.get('page', 0)
+                    is_early_page = page_num <= 2  # Title/abstract usually on first 2 pages
+                    
+                    # Detect potential title/header content
+                    lines = clean_content.split('\n')
+                    first_line = lines[0].strip() if lines else ""
+                    
+                    # Enhanced metadata for better retrieval
                     metadata = doc.metadata.copy()
-                    metadata['chunk_id'] = i
+                    metadata.update({
+                        'chunk_id': i,
+                        'chunk_position': 'early' if i < 5 else 'middle' if i < len(splits) - 5 else 'late',
+                        'is_early_page': is_early_page,
+                        'first_line': first_line,
+                        'content_length': len(clean_content),
+                        'line_count': len(lines),
+                        'has_caps': any(line.isupper() and len(line) > 5 for line in lines[:3]),  # Potential title in caps
+                        'potential_title': is_early_page and len(first_line) > 10 and len(first_line) < 200
+                    })
+                    
+                    texts.append(clean_content)
                     metadatas.append(metadata)
 
             if not texts:
                 raise ValueError("No valid text found in PDF")
             
             logger.info(f"✓ Prepared {len(texts)} text chunks for embedding")
+            logger.info(f"   - Early page chunks: {sum(1 for m in metadatas if m['is_early_page'])}")
+            logger.info(f"   - Potential title chunks: {sum(1 for m in metadatas if m['potential_title'])}")
 
-            # Create vector store
-            logger.info("Creating embeddings (this may take a moment)...")
+            # Create vector store with enhanced settings
+            logger.info("Creating embeddings with improved retrieval settings...")
             vectorstore = Chroma.from_texts(
                 texts=texts,
                 embedding=self.embeddings,
@@ -395,7 +404,7 @@ class LLMExtractor:
                 collection_name=f"ecoopen_{hash(str(texts[:3]))}",
                 client_settings=Settings(anonymized_telemetry=False)
             )
-            logger.info("✓ Vector store created with embeddings")
+            logger.info("✓ Vector store created with enhanced embeddings")
 
             return vectorstore
 
@@ -411,7 +420,7 @@ class LLMExtractor:
         docs = vectorstore.similarity_search(availability_query, k=10)
         context = "\n\n".join([doc.page_content for doc in docs])
         
-        # Limit context length to prevent LLM confusion
+        # Limit context to prevent LLM confusion
         if len(context) > 3000:
             context = context[:3000] + "..."
         
@@ -483,53 +492,124 @@ Respond with ONLY this exact JSON format (no extra text):
             return self._empty_availability()
 
     def _extract_basic_metadata_llm(self, vectorstore: Chroma) -> Dict[str, Any]:
-        """Extract basic metadata using LLM as fallback when OpenAlex fails."""
-        logger.info("Extracting basic metadata using LLM fallback...")
+        """Extract basic metadata using LLM with improved title detection."""
+        logger.info("Extracting basic metadata using improved LLM approach...")
         
-        # Get the first few chunks which usually contain title/metadata
-        docs = vectorstore.similarity_search("title author journal publication", k=3)
-        context = "\n\n".join([doc.page_content for doc in docs])
+        # Strategy 1: Look for chunks marked as potential titles
+        title_docs = vectorstore.similarity_search(
+            "title", 
+            k=10,
+            filter={"potential_title": True}  # Use enhanced metadata
+        )
+        
+        # Strategy 2: If no title chunks found, get early page content
+        if not title_docs:
+            title_docs = vectorstore.similarity_search(
+                "title abstract introduction", 
+                k=5,
+                filter={"is_early_page": True}
+            )
+        
+        # Strategy 3: Fallback to first few chunks
+        if not title_docs:
+            title_docs = vectorstore.similarity_search("paper title research", k=3)
+        
+        # Combine contexts with emphasis on structure
+        contexts = []
+        for doc in title_docs:
+            # Add structural hints to help LLM understand position
+            page_info = f"[Page {doc.metadata.get('page', 'unknown')}]"
+            chunk_pos = doc.metadata.get('chunk_position', 'unknown')
+            position_hint = f"[{chunk_pos} document section]"
+            
+            context_with_hints = f"{page_info} {position_hint}\n{doc.page_content}"
+            contexts.append(context_with_hints)
+        
+        full_context = "\n\n---\n\n".join(contexts)
         
         prompt = PromptTemplate(
             input_variables=["context"],
             template="""
-Extract only the paper title from this scientific paper text. Do not extract authors, journal, or other metadata - only the title.
+You are extracting the main title from a scientific paper. Look carefully at the document structure.
 
-Look for the main title (usually at the top, may be in caps or bold).
+The title is typically:
+- At the top of the first page
+- In larger font or caps
+- Stands alone on lines
+- Describes the research topic
+- Is NOT: author names, affiliations, journal names, abstracts, or section headers
 
-Text from paper:
+Document sections with position indicators:
 {context}
 
-Return valid JSON (no markdown, no code blocks):
+Extract ONLY the main paper title. Return valid JSON:
 {{
-  "title": "exact paper title as written"
+  "title": "exact main title of the paper"
 }}
 """
         )
         
         try:
-            logger.info("Running LLM analysis for basic metadata extraction...")
-            result = self.llm.invoke(prompt.format(context=context))
-            logger.debug(f"🔍 Raw LLM response for basic metadata: {result}")
+            logger.info("Running improved LLM analysis for title extraction...")
+            logger.debug(f"Using {len(title_docs)} chunks for title extraction")
+            
+            result = self.llm.invoke(prompt.format(context=full_context))
+            logger.debug(f"🔍 Raw LLM response for title: {result}")
+            
+            # Clean up the response
+            result = result.strip()
+            if result.startswith('```json'):
+                result = result.replace('```json', '').replace('```', '').strip()
+            
             parsed = json.loads(result)
             
             # Log extracted title for debugging
             title = parsed.get('title', 'NO TITLE FOUND')
-            logger.info(f"📖 LLM fallback extracted title: {title}")
+            logger.info(f"📖 Improved LLM extracted title: {title}")
             
             return parsed
+            
         except Exception as e:
-            logger.warning(f"LLM basic metadata extraction failed: {e}")
-            # Try to extract title from raw text as final fallback
+            logger.warning(f"Improved LLM metadata extraction failed: {e}")
+            
+            # Enhanced fallback: try to extract title from structured text
             try:
-                lines = context.split('\n')
-                for line in lines[:10]:  # Check first 10 lines
-                    line = line.strip()
-                    if len(line) > 10 and not line.lower().startswith(('abstract', 'introduction', 'keywords')):
-                        logger.info(f"Final fallback title extraction: {line[:100]}...")
-                        return {"title": line}
-            except:
-                pass
+                logger.info("Trying enhanced fallback title extraction...")
+                
+                # Look for lines that could be titles in early chunks
+                for doc in title_docs:
+                    if doc.metadata.get('is_early_page', False):
+                        lines = doc.page_content.split('\n')
+                        for i, line in enumerate(lines[:10]):
+                            line = line.strip()
+                            # Title heuristics
+                            if (10 < len(line) < 200 and  # Reasonable length
+                                not line.lower().startswith(('abstract', 'introduction', 'keywords', 'author', 'university', 'department')) and
+                                not line.endswith((',', ';', ':')) and  # Not a fragment
+                                not re.search(r'\d{4}', line)):  # Probably not a date/year line
+                                
+                                logger.info(f"Enhanced fallback found title: {line[:100]}...")
+                                return {"title": line}
+                
+                # Final fallback
+                if title_docs:
+                    first_meaningful_line = None
+                    for doc in title_docs:
+                        lines = doc.page_content.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if len(line) > 15:  # Get first substantial line
+                                first_meaningful_line = line
+                                break
+                        if first_meaningful_line:
+                            break
+                    
+                    if first_meaningful_line:
+                        logger.info(f"Final fallback title: {first_meaningful_line[:100]}...")
+                        return {"title": first_meaningful_line}
+                        
+            except Exception as e2:
+                logger.warning(f"Enhanced fallback also failed: {e2}")
             
             return {}
 
@@ -702,62 +782,67 @@ def extract_doi_from_text(text: str) -> Optional[str]:
     logger.debug("No DOI found in text")
     return None
 
+# Try to import pdf2doi for robust DOI extraction
+try:
+    from pdf2doi.pdf2doi_extract import extract_doi as pdf2doi_extract_doi
+    PDF2DOI_AVAILABLE = True
+except ImportError:
+    PDF2DOI_AVAILABLE = False
+    pdf2doi_extract_doi = None
+
 def extract_doi_from_pdf(pdf_content: bytes) -> Optional[str]:
-    """Extract DOI from PDF using both text extraction and LLM fallback."""
+    """Extract DOI from PDF using pdf2doi (if available), text extraction, and LLM fallback."""
+    # 1. Try pdf2doi if available
+    if PDF2DOI_AVAILABLE:
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".pdf") as tmp_file:
+                tmp_file.write(pdf_content)
+                tmp_file.flush()
+                result = pdf2doi_extract_doi(tmp_file.name)
+                if result and isinstance(result, dict):
+                    doi = result.get("doi")
+                    if doi and isinstance(doi, str) and doi.startswith("10."):
+                        logger.info(f"📄 Found DOI via pdf2doi: {doi}")
+                        return doi
+        except Exception as e:
+            logger.warning(f"pdf2doi DOI extraction failed: {e}")
+    # 2. Fallback: original text extraction and LLM
     try:
         # First try direct text extraction
         doc = fitz.open(stream=pdf_content, filetype="pdf")
-        
         # Search in first few pages where DOI is typically located
         text_to_search = ""
         for page_num in range(min(3, len(doc))):
             page = doc[page_num]
             text_to_search += page.get_text()
-        
         doc.close()
-        
         # Try regex extraction first
         doi = extract_doi_from_text(text_to_search)
         if doi:
             return doi
-        
         logger.debug("DOI not found via regex, trying LLM fallback...")
-        
         # If no DOI found via regex, try LLM as fallback
         if LLM_AVAILABLE:
             try:
                 from langchain_ollama import OllamaLLM
-                
-                # Use a lightweight model for DOI extraction
-                model_name = globals().get('_current_model', 'phi3:mini')
+                # Use phi4 for DOI extraction
+                model_name = globals().get('_current_model', 'phi4')
                 llm = OllamaLLM(model=model_name, base_url=DEFAULT_OLLAMA_URL)
-                
                 # Limit text to avoid LLM confusion
                 search_text = text_to_search[:1500] if len(text_to_search) > 1500 else text_to_search
-                
                 # Simple prompt for DOI extraction
-                prompt = f"""Find the DOI in this academic paper text.
-
-Text from paper:
-{search_text}
-
-Respond with ONLY the DOI in format "10.xxxx/xxxxx" or "NONE" if not found.
-DOI:"""
-                
+                prompt = f"""Find the DOI in this academic paper text.\n\nText from paper:\n{search_text}\n\nRespond with ONLY the DOI in format \"10.xxxx/xxxxx\" or \"NONE\" if not found.\nDOI:"""
                 result = llm.invoke(prompt)
                 result = result.strip()
-                
                 # Clean and validate LLM result
                 result = result.replace('DOI:', '').replace('doi:', '').strip()
-                if result != "NONE" and re.match(r'10\.\d{4,}/\S+', result):
+                if result != "NONE" and re.match(r'10\\.\\d{4,}/\\S+', result):
                     logger.info(f"📄 Found DOI via LLM: {result}")
                     return result
-                    
             except Exception as e:
                 logger.debug(f"LLM DOI extraction failed: {e}")
-        
         return None
-        
     except Exception as e:
         logger.error(f"DOI extraction failed: {e}")
         return None
@@ -1223,7 +1308,7 @@ def process_single_pdf_file(pdf_path: str, download_data: bool = False,
     # Step 3: Extract data/code availability using LLM
     try:
         logger.info("🤖 Starting LLM extraction...")
-        model_name = globals().get('_current_model', 'phi3:mini')
+        model_name = globals().get('_current_model', 'phi4')
         extractor = LLMExtractor(llm_model=model_name)
         extraction = extractor.extract_from_pdf(pdf_content, allowed_formats)
         

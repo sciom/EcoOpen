@@ -10,10 +10,10 @@ __pycache__/
 
 *.egg-info/
 
-data_downloads/
-pdf_downloads/
+*_downloads/
 
 # Log files
 *.log
 
 chroma*
+

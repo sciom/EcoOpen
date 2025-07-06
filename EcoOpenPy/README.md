@@ -27,14 +27,37 @@ A streamlined Python package for extracting data and code availability informati
 
 ## 🛠️ Installation
 
-### 1. Install Python Dependencies
+### Option 1: Install from Source (Recommended)
 
 ```bash
-# Clone or download the project
-cd EcoOpenPy
+# Clone the repository
+git clone https://github.com/yourusername/ecoopen.git
+cd ecoopen/EcoOpenPy
 
-# Install required packages
+# Install the package in development mode
+pip install -e .
+
+# Or install normally
+pip install .
+```
+
+### Option 2: Install from PyPI (when available)
+
+```bash
+pip install ecoopen
+```
+
+### Option 3: Manual Installation
+
+```bash
+# Download the code
+# Navigate to the EcoOpenPy directory
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install the package
+python setup.py install
 ```
 
 ### 2. Install Ollama
@@ -99,40 +122,92 @@ Open your browser to `http://localhost:8501` to access the GUI features:
 
 ## 📖 Usage
 
+### Command Line Interface
+
+After installation, you can use the `ecoopen` command:
+
+```bash
+# Process a single PDF
+ecoopen --pdf path/to/paper.pdf
+
+# Process a folder of PDFs
+ecoopen --pdf-folder path/to/pdf/folder --output results.csv
+
+# Process with data download
+ecoopen --pdf-folder path/to/pdfs --download-data --data-dir ./downloads
+
+# Check system compatibility
+ecoopen --check-llm
+ecoopen --check-performance
+ecoopen --list-models
+```
+
+### Python API
+
+You can also use EcoOpen programmatically:
+
+```python
+import ecoopen
+
+# Process a single PDF
+result = ecoopen.process_single_pdf_file("paper.pdf")
+
+# Process a folder of PDFs
+df = ecoopen.process_pdf_folder_to_csv("pdf_folder/", "results.csv")
+
+# Use the LLM extractor directly
+extractor = ecoopen.LLMExtractor()
+with open("paper.pdf", "rb") as f:
+    pdf_content = f.read()
+    result = extractor.extract_from_pdf(pdf_content)
+```
+
+### Legacy Usage (Direct Script)
+
+You can still run the script directly if not installed as a package:
+
+```bash
+# Process a single PDF
+python ecoopen/core.py --pdf path/to/paper.pdf
+
+# Process a folder of PDFs
+python ecoopen/core.py --pdf-folder path/to/pdf/folder --output results.csv
+```
+
 ### Basic PDF Folder Processing
 
 ```bash
 # Process all PDFs in a folder
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv
+ecoopen --pdf-folder /path/to/pdfs --output results.csv
 
 # Process with recursive search in subfolders
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --recursive
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --recursive
 
 # Enable debug logging to see detailed processing
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --debug
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --debug
 ```
 
 ### Single PDF Processing
 
 ```bash
 # Process a single PDF file
-python ecoopen.py --pdf /path/to/paper.pdf --output single_result.csv
+ecoopen --pdf /path/to/paper.pdf --output single_result.csv
 ```
 
 ### Advanced Options
 
 ```bash
 # Download data files found in papers
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --download-data --data-dir ./downloads
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --download-data --data-dir ./downloads
 
 # Download only specific data formats (NEW!)
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --download-data --formats tabular scientific
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --download-data --formats tabular scientific
 
 # Use a specific phi model
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --model phi4
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --model phi4
 
 # Limit data file downloads
-python ecoopen.py --pdf-folder /path/to/pdfs --output results.csv --download-data --max-data-files 3 --max-file-size 50
+ecoopen --pdf-folder /path/to/pdfs --output results.csv --download-data --max-data-files 3 --max-file-size 50
 ```
 
 ### Model Management

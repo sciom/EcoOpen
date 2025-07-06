@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecoopen"
+version = "1.0.0"
+description = "LLM-based Data Availability Extraction from Scientific PDFs"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Domagoj K. Hackenberger", email = "domagoj.hackenberger@example.com"},
+]
+maintainers = [
+    {name = "Domagoj K. Hackenberger", email = "domagoj.hackenberger@example.com"},
+]
+keywords = ["pdf", "extraction", "data availability", "scientific papers", "LLM", "ollama"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "pandas>=1.5.0",
+    "requests>=2.28.0",
+    "PyMuPDF>=1.23.0",
+    "tqdm>=4.64.0",
+    "langchain>=0.1.0",
+    "langchain-ollama>=0.1.0",
+    "langchain-community>=0.0.20",
+    "langchain-chroma>=0.1.0",
+    "chromadb>=0.4.0",
+    "pypdf>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.950",
+]
+gui = [
+    "streamlit>=1.28.0",
+    "plotly>=5.15.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/ecoopen"
+Repository = "https://github.com/yourusername/ecoopen"
+Issues = "https://github.com/yourusername/ecoopen/issues"
+Documentation = "https://github.com/yourusername/ecoopen/blob/main/README.md"
+
+[project.scripts]
+ecoopen = "ecoopen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ecoopen*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+ecoopen = ["*.txt", "*.md"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

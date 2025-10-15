@@ -1,16 +1,52 @@
-examples/
-downloads
-
-.vscode*
-
-.~lock.*
-
-*.cpython*
+# Python
 __pycache__/
-
+*.py[cod]
+*$py.class
+*.so
+.Python
 *.egg-info/
+dist/
+build/
+*.egg
 
-data_downloads/
-pdf_downloads/
+# Environment
+.env
+.env.local
+.venv/
+venv/
+ENV/
 
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project specific
+streamlit_chroma_db/
+chroma_db/
+papers/
+*.pdf
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
 *.log
+logs/
+
+# Databases
+*.db
+*.sqlite
+.mongo/
+
+# Temporary
+*.tmp
+.temp/

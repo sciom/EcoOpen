@@ -1,154 +1,221 @@
-# EcoOpen
+# EcoOpen LLM — PDF Scientific Data Extractor
 
-EcoOpen is a Python package designed to process DOIs, download associated PDFs, extract text, and analyze data and code availability statements. It can also download data files from repositories like Dryad, Zenodo, GitHub, and Figshare, using both web scraping and API calls for supported repositories.
+Modern FastAPI backend with a Vue 3 frontend for extracting structured information from scientific PDFs. The legacy Streamlit app and CLI scripts have been removed.
 
 ## Features
 
-- Validates and processes DOIs to retrieve metadata via Unpaywall and OpenAlex.
-- Downloads PDFs from open-access sources.
-- Extracts text from PDFs using PyMuPDF.
-- Analyzes data and code availability statements using NLP (spaCy).
-- Downloads data files from repositories using web scraping and APIs (e.g., Zenodo, Dryad, Figshare).
-- Outputs results to a CSV file with detailed metadata.
+- DOI and Title extraction (validated; no guesses)
+- Data/Code availability statements and licenses
+- Data/Code links with repair and de-duplication
+- Single-file analyze and batch jobs with progress
+- CSV export for batch results
 
-## Installation
+## What's new (core reliability and extraction quality)
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/ecoopen.git
-   cd ecoopen
-   ```
+- Domain-specific errors ensure functional issues (invalid PDF, missing embeddings, LLM outages) are surfaced clearly instead of generic API errors.
+- New synchronous analyze mode that reads and analyzes a PDF without requiring MongoDB.
+- Context repair: expands extracted availability statements to full paragraph/sentence boundaries (no truncated mid-sentence spans).
+- URL repair: reconstructs and normalizes URLs broken by line breaks or hyphenation; trims trailing punctuation; deduplicates and validates links.
+- Graceful degradation: if the LLM endpoint is unavailable, deterministic heuristics still extract useful signals.
 
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Quick start: Analyze a PDF (auth required)
 
-   The `requirements.txt` includes:
-   ```
-   pandas
-   requests
-   beautifulsoup4
-   pyalex
-   PyMuPDF
-   tqdm
-   spacy
-   zenodo-client
-   ```
-
-3. Install the spaCy English model:
-   ```bash
-   python -m spacy download en_core_web_sm
-   ```
-
-4. Install the package locally:
-   ```bash
-   pip install -e .
-   ```
-
-## Usage
-
-### Command-Line Interface (CLI)
-Process a list of DOIs and save the results to a CSV file:
+All analyze endpoints now require authentication. First, create a user and get a token:
 
 ```bash
-ecoopen --dois "10.1111/2041-210X.12952" --save-to-disk --email "your.email@example.com" --download-dir "./pdf_downloads" --data-download-dir "./data_downloads"
+curl -sS -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"secret"}' \
+  "http://localhost:8000/auth/register"
+
+# or login
+TOKEN=$(curl -sS -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"secret"}' \
+  "http://localhost:8000/auth/login" | jq -r .access_token)
 ```
 
-Or process DOIs from a CSV file:
+Analyze a single PDF synchronously by calling the API with `mode=sync` and the bearer token:
 
 ```bash
-ecoopen --input-file input_dois.csv --save-to-disk --email "your.email@example.com" --download-dir "./pdf_downloads" --data-download-dir "./data_downloads"
+curl -sS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@/path/to/paper.pdf;type=application/pdf" \
+  "http://localhost:8000/analyze?mode=sync"
 ```
 
-### As a Library
-You can also use EcoOpen as a Python library:
+The response is a JSON with fields like `title`, `doi`, `data_availability_statement`, `code_availability_statement`, `data_links`, and `code_links`.
 
-```python
-from ecoopen import process_and_analyze_dois
+Troubleshooting:
 
-dois = ["10.1111/2041-210X.12952"]
-df = process_and_analyze_dois(
-    dois=dois,
-    save_to_disk=True,
-    email="your.email@example.com",
-    download_dir="./pdf_downloads",
-    data_download_dir="./data_downloads",
-    target_formats=["csv", "xlsx"]
-)
-print(df[["identifier", "doi", "title", "data_links", "downloaded_data_files"]])
+- Embedding model missing (Ollama): You'll get `400` with `code: embed_model_missing`. Install:
+
+  ```bash
+  ollama pull nomic-embed-text
+  ```
+
+- LLM endpoint unavailable: You'll get `502` when the agent is required; otherwise the service falls back to deterministic extraction where possible.
+- Invalid/corrupted PDF: You'll get `400` with a clear message.
+
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- Optional local embeddings: Ollama running with `nomic-embed-text` (only if you rely on local embedding; otherwise remote agent can still extract with reduced recall)
+
+## Setup
+
+### Python environment
+
+- Option A (recommended): Conda
+
+  ```bash
+  ./setup_conda.sh            # creates env 'ecoopen-llm' and installs deps
+  conda activate ecoopen-llm
+  ```
+
+- Option B: Pip
+
+  ```bash
+  python -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt
+  ```
+
+### Configuration (optional but recommended)
+
+```bash
+cp .env.example .env
+# Edit .env to set AGENT_BASE_URL / AGENT_API_KEY, and OLLAMA_* if using local embeddings
 ```
 
-## Setting Up the Zenodo API
+## Run
 
-EcoOpen uses the Zenodo API to fetch downloadable files from Zenodo repositories, which is more reliable than web scraping. To enable this feature, you need to set up a Zenodo API token:
+### Run locally (no Docker)
 
-1. **Obtain a Zenodo API Token**:
-   - Go to [Zenodo](https://zenodo.org) and sign in (or create an account).
-   - Navigate to "Applications" > "Personal Access Tokens" in your user settings.
-   - Generate a new token with the scope `deposit:write` (though for downloading, read-only access is sufficient).
-   - Copy the generated token.
+#### Service (MongoDB)
 
-2. **Set the Zenodo API Token as an Environment Variable**:
-   - On Linux/MacOS:
-     ```bash
-     export ZENODO_ACCESS_TOKEN="your_zenodo_token"
-     ```
-   - On Windows (Command Prompt):
-     ```cmd
-     set ZENODO_ACCESS_TOKEN=your_zenodo_token
-     ```
-   - Alternatively, you can add the export command to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`) to make it persistent.
+- Local install (MongoDB 6+): `mongod --dbpath /path/to/db`
+- Or skip entirely and use `mode=sync` for single-file analysis without Mongo.
 
-3. **Verify the Token**:
-   - Run the EcoOpen command as shown above. If the token is set correctly, EcoOpen will use the Zenodo API to fetch files from Zenodo links. If no token is provided, it will fall back to web scraping, which may be less reliable.
+#### Backend (FastAPI)
 
-**Note**: Providing a Zenodo API token allows EcoOpen to directly access file URLs from Zenodo records, improving download success rates. Without a token, the package will attempt to scrape Zenodo pages, which may fail due to rate limiting or page structure changes.
+```bash
+./run_api.sh
+```
 
-## Downloading Data from GitHub
+The API will be available at <http://localhost:8000>
+Endpoints:
 
-EcoOpen downloads data from GitHub repositories by scraping GitHub pages to find direct download links. It looks for file URLs in the repository, such as raw file links (e.g., `https://raw.githubusercontent.com/user/repo/main/data.csv`), and converts `/blob/` URLs to raw URLs for downloading. No GitHub API token is required, as the package relies entirely on web scraping for GitHub data.
+- `GET /health` — status, agent and embeddings reachability
+- `GET /config` — runtime caps (max file size, models)
+- `POST /analyze` — multipart form with `file=<PDF>`
+- `POST /analyze/batch` — multipart form with `files=<PDF>...`
+- `GET /export/csv/{job_id}` — CSV export for batch
 
-**Note**: Web scraping GitHub pages may be affected by rate limiting or changes in page structure. Ensure that your IP is not blocked by GitHub when making frequent requests.
+#### Background Worker
+A MongoDB-backed in-process worker starts automatically with the FastAPI app and polls for documents with status `queued`.
 
-## Output
+Notes:
 
-The package generates an `ecoopen_output.csv` file with the following columns:
-- `identifier`: Unique identifier for each DOI.
-- `doi`: The processed DOI.
-- `title`: Title of the paper.
-- `authors`: Authors of the paper.
-- `published`: Publication date.
-- `url`: Landing page URL.
-- `journal`: Journal name.
-- `has_fulltext`: Whether a full-text URL was found.
-- `is_oa`: Whether the paper is open access.
-- `downloaded`: Whether the PDF was successfully downloaded.
-- `path`: Path to the downloaded PDF.
-- `pdf_content_length`: Size of the PDF in bytes.
-- `data_links`: List of data URLs found in the paper.
-- `downloaded_data_files`: List of paths to downloaded data files.
-- `data_availability_statements`: Primary data availability statement.
-- `all_data_availability_statements`: All data availability statements found.
-- `code_availability_statements`: Primary code availability statement.
-- `all_code_availability_statements`: All code availability statements found.
-- `format`, `repository`, `repository_url`, `download_status`, `data_download_path`, `data_size`, `number_of_files`, `license`: Metadata about downloaded data files.
+- Single analyze marks the document queued and waits up to 180s for completion (then falls back to synchronous processing if still pending).
+- Batch analyze processes documents asynchronously; progress and results are stored in MongoDB.
+- Concurrency controlled via `QUEUE_CONCURRENCY` in `.env`.
 
-## Logging
+#### Frontend (Vue 3 + Vite)
 
-EcoOpen generates a log file (`ecoopen.log`) with detailed information about the processing steps, including API calls, download attempts, and errors. Check this file to debug issues with PDF or data downloads.
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open <http://localhost:5173>
+If your API uses a non-default URL, create `frontend/.env`:
 
-## Troubleshooting
+```bash
+VITE_API_BASE=http://localhost:8000
+```
 
-- **PDF Download Failures**: If PDFs fail to download (e.g., `403 Forbidden`), ensure your IP is not blocked by the target servers. The package rotates user agents to mitigate this, but some publishers may still restrict access.
-- **Data Download Failures**: If data files are not downloaded, check `ecoopen.log` for errors. Ensure that API tokens (e.g., Zenodo) are set correctly if the data links point to those repositories.
-- **GitHub Scraping Issues**: If GitHub data downloads fail, verify that the repository links are accessible and contain files in the target formats (`csv`, `xlsx`, etc.). GitHub may block requests if they detect automated scraping; consider adding delays or using a VPN if issues persist.
-- **Zenodo API Issues**: If Zenodo downloads fail, verify your API token and ensure it has the correct permissions. Without a token, the package falls back to web scraping, which may fail for complex pages.
+## Testing
+```bash
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run specific test file
+pytest tests/test_config.py
+
+# Run with verbose output
+pytest -v
+```
+
+## Development
+
+### Code Quality Tools
+
+```bash
+# Format code with black
+black app/ tests/
+
+# Sort imports
+isort app/ tests/
+
+# Lint with flake8
+flake8 app/ tests/
+
+# Type checking with mypy
+mypy app/
+```
+
+### Project Structure
+
+```text
+EcoOpen_LLM/
+├── app/
+│  ├── core/config.py
+│  ├── models/schemas.py
+│  ├── routes/{health.py, analyze.py, export.py}
+│  ├── services/{agent.py, jobs.py}
+│  └── main.py
+├── frontend/
+│  ├── src/
+│  ├── dist/           # built artifacts (ignored in git)
+│  └── ...
+├── tests/
+│  └── test_api.py
+├── .env.example
+├── AGENT_PLAN.md
+├── requirements.txt
+├── run_api.sh
+├── setup_conda.sh
+└── README.md
+```
+
+## Env Vars (.env)
+- `AGENT_BASE_URL` — OpenAI-compatible base URL (e.g., `https://.../v1`)
+- `AGENT_MODEL` — agent model id (include the full tag when required)
+  - Examples: `llama3.1`, `gpt-oss:120b`, `nomic-embed-text:latest`
+- `AGENT_API_KEY` — optional bearer key
+- `OLLAMA_HOST` — local Ollama URL (default `http://localhost:11434`)
+- `OLLAMA_MODEL` — local LLM model (default `phi3:mini`)
+- `OLLAMA_EMBED_MODEL` — embedding model (default `nomic-embed-text`)
+- `MAX_FILE_SIZE_MB` — upload cap (default 50)
+- `CORS_ORIGINS` — allowed origins list
+- `REPAIR_CONTEXT_ENABLED` — expand statements to paragraph/sentence (default: true)
+- `REPAIR_URLS_ENABLED` — repair and normalize URLs (default: true)
+
+## Behavior Notes
+- Chroma telemetry disabled via `ChromaSettings(anonymized_telemetry=False)`.
+- With URL repair on, the service attempts to reconstruct split or hyphenated links and trims trailing punctuation before validation.
+- Data links are filtered to primary repositories/DOI hosts; general website mentions are excluded by design.
+- Batch jobs run sequentially and expose progress.
 
 ## Contributing
-
-Contributions are welcome! Please submit a pull request or open an issue on GitHub.
+Issues and PRs are welcome.
 
 ## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+Open source. See the repository license file.

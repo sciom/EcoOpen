@@ -1,0 +1,31 @@
+langchain==0.1.0
+langchain-community==0.0.10
+chromadb==0.4.22
+ollama==0.1.7
+PyPDF2==3.0.1
+pypdf==4.0.1
+python-dotenv==1.0.0
+pydantic==2.5.0
+# CPU embeddings fallback (keep compatible with current huggingface_hub)
+sentence-transformers>=3.0.0
+huggingface-hub>=0.20.0
+requests==2.31.0
+
+# FastAPI backend
+fastapi>=0.103,<1.0
+uvicorn[standard]>=0.24
+python-multipart>=0.0.7
+pydantic-settings>=2.2
+httpx>=0.25
+openai>=1.0.0
+pytest>=7.4
+pytest-asyncio>=0.23
+websockets>=12.0
+
+# Auth
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Storage
+motor>=3.3
+pymongo>=4.6

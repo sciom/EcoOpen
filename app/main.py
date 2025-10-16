@@ -51,11 +51,11 @@ app.add_middleware(
 )
 
 # Routers
-app.include_router(health.router, tags=["meta"]) 
-app.include_router(auth.router, tags=["auth"]) 
-app.include_router(tasks.router, tags=["tasks"]) 
-app.include_router(analyze.router, tags=["analyze"]) 
-app.include_router(export.router, tags=["export"]) 
+app.include_router(health.router, tags=["meta"])
+app.include_router(auth.router, tags=["auth"])
+app.include_router(tasks.router, tags=["tasks"])
+app.include_router(analyze.router, tags=["analyze"])
+app.include_router(export.router, tags=["export"])
 
 @app.get("/")
 async def root():

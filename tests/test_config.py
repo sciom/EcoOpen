@@ -12,7 +12,7 @@ def test_default_settings(monkeypatch):
     monkeypatch.delenv("AGENT_API_KEY", raising=False)
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     settings = Settings()
-    
+
     assert settings.MAX_FILE_SIZE_MB == 50
     assert settings.AGENT_MODEL == "llama3.1"
     assert settings.OLLAMA_EMBED_MODEL == "nomic-embed-text"
@@ -25,7 +25,7 @@ def test_agent_base_url_normalization():
     # Test with trailing slash
     settings = Settings(_env_file=None, AGENT_BASE_URL="http://localhost:11434/v1/")
     assert settings.AGENT_BASE_URL == "http://localhost:11434/v1"
-    
+
     # Test with empty value
     settings = Settings(_env_file=None, AGENT_BASE_URL="")
     assert settings.AGENT_BASE_URL == "http://localhost:11434/v1"
@@ -36,11 +36,11 @@ def test_log_level_validation():
     # Valid log level
     settings = Settings(_env_file=None, LOG_LEVEL="DEBUG")
     assert settings.LOG_LEVEL == "DEBUG"
-    
+
     # Invalid log level should default to INFO
     settings = Settings(_env_file=None, LOG_LEVEL="INVALID")
     assert settings.LOG_LEVEL == "INFO"
-    
+
     # Case insensitive
     settings = Settings(_env_file=None, LOG_LEVEL="debug")
     assert settings.LOG_LEVEL == "DEBUG"
@@ -52,7 +52,7 @@ def test_cors_origins_parsing():
     settings = Settings(_env_file=None, CORS_ORIGINS='["http://example.com", "http://test.com"]')
     assert "http://example.com" in settings.CORS_ORIGINS
     assert "http://test.com" in settings.CORS_ORIGINS
-    
+
     # Comma-separated format
     settings = Settings(_env_file=None, CORS_ORIGINS="http://example.com, http://test.com")
     assert "http://example.com" in settings.CORS_ORIGINS

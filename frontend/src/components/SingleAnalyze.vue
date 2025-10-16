@@ -13,10 +13,10 @@
     <div class="upload-section">
       <form @submit.prevent="onSubmit" class="upload-form">
         <div class="file-input-wrapper">
-          <input 
-            type="file" 
-            accept="application/pdf" 
-            @change="onFile" 
+          <input
+            type="file"
+            accept="application/pdf"
+            @change="onFile"
             id="pdf-file"
             class="file-input"
           />
@@ -29,9 +29,9 @@
             </span>
           </label>
         </div>
-        <button 
-          type="submit" 
-          :disabled="!file || loading || !authed" 
+        <button
+          type="submit"
+          :disabled="!file || loading || !authed"
           class="analyze-button"
           :title="!authed ? 'Login in Settings to analyze a PDF' : (file ? 'Analyze selected PDF' : 'Choose a file to begin')"
         >
@@ -52,7 +52,7 @@
         <i class="fas fa-check-circle"></i>
         Analysis Results
       </h3>
-      
+
       <div class="result-card">
         <div class="result-header">
           <div class="file-info">
@@ -104,7 +104,7 @@
               </a>
             </div>
           </div>
-          
+
           <div v-if="result.code_links && result.code_links.length" class="links-group">
             <h4><i class="fas fa-code"></i> Code Links ({{ result.code_links.length }})</h4>
             <div class="links-list">
@@ -600,26 +600,26 @@ async function onSubmit() {
   .single-analyze {
     padding: 0 1rem;
   }
-  
+
   .section-title {
     font-size: 1.5rem;
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .file-input-label {
     padding: 2rem 1rem;
   }
-  
+
   .result-card {
     padding: 1.5rem;
   }
-  
+
   .confidence-item {
     grid-template-columns: 1fr;
     gap: 0.5rem;
   }
-  
+
   .links-section {
     grid-template-columns: 1fr;
   }

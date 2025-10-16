@@ -26,16 +26,16 @@
             <i class="fas fa-link"></i>
             API Base URL
           </label>
-          <input 
-            v-model="apiBase" 
-            placeholder="http://localhost:8000" 
+          <input
+            v-model="apiBase"
+            placeholder="http://localhost:8000"
             class="form-input"
             type="url"
           />
           <p class="form-help">
             Override is stored in localStorage. Leave empty to use default.
           </p>
-          
+
           <div class="button-group">
             <button @click="saveBase" class="save-button">
               <i class="fas fa-save"></i>
@@ -64,7 +64,7 @@
             <i :class="loading ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i>
             {{ loading ? 'Refreshing...' : 'Refresh Status' }}
           </button>
-          
+
           <div v-if="error" class="error-alert">
             <i class="fas fa-exclamation-triangle"></i>
             <div>
@@ -72,7 +72,7 @@
               <p>{{ error }}</p>
             </div>
           </div>
-          
+
           <div v-if="health" class="health-summary">
             <div class="health-item" :class="getHealthClass(health.status)">
               <div class="health-icon">
@@ -170,7 +170,7 @@
           {{ showFullConfig ? 'Hide Details' : 'Show Details' }}
         </button>
       </div>
-      
+
       <transition name="config-slide">
         <div v-if="showFullConfig" class="config-content">
           <div class="config-wrapper">
@@ -189,23 +189,23 @@
         </h3>
         <p>Common tasks and shortcuts</p>
       </div>
-      
+
       <div class="actions-grid">
         <button @click="testConnection" :disabled="loading" class="action-button">
           <i class="fas fa-wifi"></i>
           <span>Test Connection</span>
         </button>
-        
+
         <button @click="refresh" :disabled="loading" class="action-button">
           <i class="fas fa-sync-alt"></i>
           <span>Refresh All</span>
         </button>
-        
+
         <button @click="clearStorage" class="action-button warning">
           <i class="fas fa-trash-alt"></i>
           <span>Clear Storage</span>
         </button>
-        
+
         <button @click="exportSettings" class="action-button">
           <i class="fas fa-download"></i>
           <span>Export Settings</span>
@@ -324,7 +324,7 @@ function exportSettings() {
     timestamp: new Date().toISOString(),
     version: '1.0'
   }
-  
+
   const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -927,37 +927,37 @@ onBeforeUnmount(() => {
   .settings-view {
     padding: 0 1rem;
   }
-  
+
   .section-title {
     font-size: 1.5rem;
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .settings-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .card-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
   }
-  
+
   .button-group {
     flex-direction: column;
   }
-  
+
   .service-item {
     flex-direction: column;
     text-align: center;
     gap: 0.75rem;
   }
-  
+
   .actions-grid {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
-  
+
   .action-button {
     padding: 1rem 0.5rem;
   }

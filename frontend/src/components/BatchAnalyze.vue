@@ -13,11 +13,11 @@
     <div class="upload-section">
       <form @submit.prevent="startBatch" class="upload-form">
         <div class="file-input-wrapper">
-          <input 
-            type="file" 
-            accept="application/pdf" 
-            multiple 
-            @change="onFiles" 
+          <input
+            type="file"
+            accept="application/pdf"
+            multiple
+            @change="onFiles"
             id="batch-files"
             class="file-input"
           />
@@ -30,7 +30,7 @@
             </span>
           </label>
         </div>
-        
+
         <div v-if="files.length" class="file-list">
           <h4><i class="fas fa-list"></i> Selected Files</h4>
           <div class="files-grid">
@@ -42,9 +42,9 @@
           </div>
         </div>
 
-        <button 
-          type="submit" 
-          :disabled="!files.length || loading || !authed" 
+        <button
+          type="submit"
+          :disabled="!files.length || loading || !authed"
           class="analyze-button"
           :title="!authed ? 'Login in Settings to run batch analysis' : (files.length ? `Start analysis for ${files.length} file(s)` : 'Choose files to begin')"
         >
@@ -77,7 +77,7 @@
           <i :class="getStatusIcon(job.status)"></i>
           <span class="status-text">{{ getStatusText(job.status) }}</span>
         </div>
-        
+
         <div class="progress-info">
           <span class="progress-text">
             {{ job.progress.current }} of {{ job.progress.total }} files processed
@@ -133,9 +133,9 @@
               <div v-if="r.title" class="result-field">
                 <strong>Title:</strong> {{ r.title }}
               </div>
-              
+
               <div v-if="r.doi" class="result-field">
-                <strong>DOI:</strong> 
+                <strong>DOI:</strong>
                 <a :href="doiHref(r.doi)" target="_blank" rel="noopener" class="doi-link">
                   {{ r.doi }}
                   <i class="fas fa-external-link-alt"></i>
@@ -166,7 +166,7 @@
                   </a>
                 </div>
               </div>
-              
+
               <div v-if="r.code_links && r.code_links.length" class="result-field">
                 <strong>Code Links ({{ r.code_links.length }}):</strong>
                 <div class="links-list">
@@ -175,7 +175,7 @@
                   </a>
                 </div>
               </div>
-              
+
               <div v-if="r.confidence_scores && Object.keys(r.confidence_scores).length" class="confidence-mini">
                 <strong>Confidence:</strong>
                 <div class="confidence-badges">
@@ -849,41 +849,41 @@ onUnmounted(() => {
   .batch-analyze {
     padding: 0 1rem;
   }
-  
+
   .section-title {
     font-size: 1.5rem;
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .file-input-label {
     padding: 2rem 1rem;
   }
-  
+
   .job-status {
     padding: 1.5rem;
   }
-  
+
   .job-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .results-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  
+
   .result-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
   }
-  
+
   .files-grid {
     max-height: 200px;
   }
-  
+
   .results-grid {
     max-height: 400px;
   }

@@ -26,10 +26,10 @@
 
     <main class="main-content">
       <nav class="tab-navigation">
-        <button 
-          v-for="tabItem in visibleTabs" 
+        <button
+          v-for="tabItem in visibleTabs"
           :key="tabItem.id"
-          :class="['tab-button', { active: tab === tabItem.id }]" 
+          :class="['tab-button', { active: tab === tabItem.id }]"
           @click="onTabClick(tabItem.id)"
         >
           <i :class="tabItem.icon"></i>
@@ -334,25 +334,25 @@ watchEffect(() => {
     text-align: center;
     padding: 0 1rem;
   }
-  
+
   .main-content {
     padding: 1rem;
   }
-  
+
   .content-panel {
     padding: 1.5rem;
   }
-  
+
   .tab-button {
     min-width: auto;
     flex: 1;
     padding: 0.75rem 0.5rem;
   }
-  
+
   .tab-button span {
     display: none;
   }
-  
+
   .app-title {
     font-size: 1.5rem;
   }
@@ -363,7 +363,7 @@ watchEffect(() => {
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .api-status {
     font-size: 0.75rem;
     padding: 0.4rem 0.8rem;

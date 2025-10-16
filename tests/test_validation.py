@@ -46,25 +46,25 @@ def test_sanitize_filename():
     """Test filename sanitization."""
     # Normal filename
     assert sanitize_filename("document.pdf") == "document.pdf"
-    
+
     # Path traversal attempts - leading dots are stripped
     result = sanitize_filename("../../../etc/passwd")
     assert "/" not in result and "\\" not in result
     assert "etc_passwd" in result
-    
+
     result = sanitize_filename("..\\windows\\system32")
     assert "/" not in result and "\\" not in result
     assert "windows_system32" in result
-    
+
     # Null bytes
     assert sanitize_filename("file\x00.pdf") == "file.pdf"
-    
+
     # Leading dots and spaces
     assert sanitize_filename("  ...file.pdf") == "file.pdf"
-    
+
     # Empty or None
     assert sanitize_filename("") == "unnamed.pdf"
-    
+
     # Long filename
     long_name = "a" * 300 + ".pdf"
     result = sanitize_filename(long_name)
@@ -75,7 +75,7 @@ def test_sanitize_filename():
 def test_validate_file_extension():
     """Test file extension validation."""
     allowed = {".pdf", ".txt"}
-    
+
     assert validate_file_extension("document.pdf", allowed) is True
     assert validate_file_extension("document.txt", allowed) is True
     assert validate_file_extension("document.PDF", allowed) is True  # Case insensitive

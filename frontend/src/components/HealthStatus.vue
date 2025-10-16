@@ -80,7 +80,7 @@
           {{ showConfig ? 'Hide' : 'Show' }}
         </button>
       </div>
-      
+
       <div v-if="showConfig" class="config-content">
         <pre class="config-json">{{ config }}</pre>
       </div>
@@ -544,35 +544,35 @@ onMounted(refresh)
   .health-status {
     padding: 0 1rem;
   }
-  
+
   .section-title {
     font-size: 1.5rem;
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .status-card {
     flex-direction: column;
     text-align: center;
     gap: 1rem;
   }
-  
+
   .component-card {
     flex-direction: column;
     text-align: center;
     gap: 1rem;
   }
-  
+
   .config-header {
     flex-direction: column;
     gap: 1rem;
     align-items: flex-start;
   }
-  
+
   .components-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .diagnostics-grid {
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }

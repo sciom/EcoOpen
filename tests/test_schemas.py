@@ -18,7 +18,7 @@ def test_pdf_analysis_result_model():
         data_availability_statement="Data is available",
         source_file="test.pdf"
     )
-    
+
     assert result.title == "Test Paper"
     assert result.doi == "10.1234/test"
     assert result.data_availability_statement == "Data is available"
@@ -35,7 +35,7 @@ def test_pdf_analysis_result_with_links():
         data_links=["http://example.com/data"],
         code_links=["http://github.com/repo"]
     )
-    
+
     assert len(result.data_links) == 1
     assert len(result.code_links) == 1
     assert result.data_links[0] == "http://example.com/data"
@@ -44,7 +44,7 @@ def test_pdf_analysis_result_with_links():
 def test_batch_progress_model():
     """Test BatchProgress model."""
     progress = BatchProgress(current=5, total=10)
-    
+
     assert progress.current == 5
     assert progress.total == 10
 
@@ -57,7 +57,7 @@ def test_batch_status_model():
         status="queued",
         progress=progress
     )
-    
+
     assert status.job_id == "test-job-123"
     assert status.status == "queued"
     assert status.progress.current == 0
@@ -73,7 +73,7 @@ def test_health_model():
         agent_reachable=True,
         embeddings_reachable=True
     )
-    
+
     assert health.status == "ok"
     assert health.agent_model == "llama3.1"
     assert health.agent_reachable is True

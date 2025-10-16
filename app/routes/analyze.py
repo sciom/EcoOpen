@@ -71,14 +71,14 @@ def _validate_pdf(file: UploadFile):
     """Validate that the uploaded file is a PDF."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-    
+
     # Sanitize filename
     safe_filename = sanitize_filename(file.filename)
-    
+
     # Check extension
     if not validate_file_extension(safe_filename, {".pdf"}):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
-    
+
     return safe_filename
 
 

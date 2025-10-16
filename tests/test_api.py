@@ -15,7 +15,7 @@ def test_root_endpoint(client):
 def test_config_validation():
     """Test configuration validation."""
     from app.core.config import settings
-    
+
     # Verify critical settings are present
     assert settings.AGENT_BASE_URL is not None
     assert settings.AGENT_MODEL is not None

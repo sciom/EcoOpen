@@ -108,54 +108,6 @@
         </div>
       </div>
 
-      <!-- Authentication Card -->
-      <div class="settings-card">
-        <div class="card-header">
-          <h3>
-            <i class="fas fa-user-lock"></i>
-            Authentication
-          </h3>
-          <p>Login is required to use the app (analyze, batch, export).</p>
-        </div>
-
-        <div class="form-section">
-          <div class="auth-row">
-            <div class="auth-status" :class="authed ? 'authed' : 'anon'">
-              <i :class="authed ? 'fas fa-user-check' : 'fas fa-user'" />
-              <span v-if="authed">{{ email }}</span>
-              <span v-else>Not signed in</span>
-            </div>
-            <button v-if="authed" @click="onLogout" class="reset-button">
-              <i class="fas fa-sign-out-alt"></i>
-              Logout
-            </button>
-          </div>
-
-          <div v-if="!authed" class="auth-grid">
-            <input v-model="email" type="email" placeholder="email@example.com" class="form-input" />
-            <input v-model="password" type="password" placeholder="Password" class="form-input" />
-
-            <div class="button-group">
-              <button @click="onLogin" class="save-button" :disabled="authLoading">
-                <i :class="authLoading ? 'fas fa-spinner fa-spin' : 'fas fa-sign-in-alt'" />
-                {{ authLoading ? 'Signing in...' : 'Login' }}
-              </button>
-              <button @click="onRegister" class="reset-button" :disabled="authLoading">
-                <i class="fas fa-user-plus"></i>
-                Register
-              </button>
-            </div>
-
-            <div v-if="authError" class="error-alert">
-              <i class="fas fa-exclamation-triangle"></i>
-              <div>
-                <strong>Authentication Error</strong>
-                <p>{{ authError }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Server Configuration Card -->
@@ -216,8 +168,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { getHealth, getConfig, getApiBase, setApiBase, login, register, logout, isAuthenticated, getAuthEmail, AUTH_EVENT } from '../api'
+import { ref, onMounted } from 'vue'
+import { getHealth, getConfig, getApiBase, setApiBase } from '../api'
 
 const apiBase = ref(getApiBase())
 const loading = ref(false)
@@ -226,12 +178,7 @@ const health = ref(null)
 const config = ref('')
 const showFullConfig = ref(false)
 
-// Auth state
-const authed = ref(isAuthenticated())
-const email = ref(getAuthEmail())
-const password = ref('')
-const authLoading = ref(false)
-const authError = ref('')
+// Authentication is now handled in LoginView. No auth state here.
 
 function saveBase() {
   setApiBase(apiBase.value)
@@ -336,48 +283,8 @@ function exportSettings() {
   URL.revokeObjectURL(url)
 }
 
-async function onLogin() {
-  try {
-    authLoading.value = true
-    authError.value = ''
-    await login(email.value, password.value)
-  } catch (e) {
-    authError.value = String(e)
-  } finally {
-    authLoading.value = false
-  }
-}
-
-async function onRegister() {
-  try {
-    authLoading.value = true
-    authError.value = ''
-    await register(email.value, password.value)
-  } catch (e) {
-    authError.value = String(e)
-  } finally {
-    authLoading.value = false
-  }
-}
-
-function onLogout() {
-  logout()
-}
-
-function updateAuth() {
-  authed.value = isAuthenticated()
-  email.value = getAuthEmail()
-  password.value = ''
-}
-
 onMounted(() => {
   refresh()
-  window.addEventListener(AUTH_EVENT, updateAuth)
-  updateAuth()
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener(AUTH_EVENT, updateAuth)
 })
 </script>
 

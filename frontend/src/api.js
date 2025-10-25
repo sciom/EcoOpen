@@ -46,12 +46,12 @@ function setAuth(token, email) {
 }
 export function logout() { setAuth('', '') }
 
-export async function register(email, password) {
+export async function register(email, password, passwordConfirm) {
   const base = getApiBase()
   const r = await fetch(`${base}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, password_confirm: passwordConfirm })
   })
   if (!r.ok) {
     const t = await r.text().catch(() => '')
@@ -111,7 +111,7 @@ function friendlyErrorText(status, rawText) {
     const detail = parsed?.detail || parsed?.message || rawText
     if (typeof detail === 'string') {
       if (status === 401) {
-        return 'Authentication required or token invalid. Please login again in Settings.'
+        return 'Authentication required or token invalid. Please login again on the Login page.'
       }
       if (status === 503 && /Mongo dependencies|Mongo deps|requires Mongo|python-jose/i.test(detail)) {
         return `${detail}\n\nTip: Use single analyze (sync) where possible or install missing dependencies (motor, pymongo, python-jose).`

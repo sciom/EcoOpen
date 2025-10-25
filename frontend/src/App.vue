@@ -16,10 +16,20 @@
             <i class="fas fa-server"></i>
             <span>{{ apiBase }}</span>
           </div>
-          <button class="auth-chip" @click="tab = 'settings'">
-            <i :class="authed ? 'fas fa-user-check' : 'fas fa-user'" />
-            <span>{{ authed ? authEmail : 'Sign in' }}</span>
-          </button>
+          <div class="auth-wrapper">
+            <button class="auth-chip" @click="onAuthChipClick">
+              <i :class="authed ? 'fas fa-user-check' : 'fas fa-user'" />
+              <span>{{ authed ? authEmail : 'Sign in' }}</span>
+            </button>
+            <div v-if="authed && showAuthMenu" class="auth-menu">
+              <button class="auth-menu-item" @click="goToSettings">
+                <i class="fas fa-cog"></i> Settings
+              </button>
+              <button class="auth-menu-item danger" @click="onLogout">
+                <i class="fas fa-sign-out-alt"></i> Logout
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </header>
@@ -44,6 +54,7 @@
             <SingleAnalyze v-else-if="tab === 'single'" />
             <BatchAnalyze v-else-if="tab === 'batch'" @switch-tab="onTabClick($event)" />
             <JobsView v-else-if="tab === 'jobs'" />
+            <LoginView v-else-if="tab === 'login'" @switch-tab="onTabClick($event)" />
             <SettingsView v-else />
           </section>
         </transition>
@@ -63,30 +74,33 @@ import SingleAnalyze from './components/SingleAnalyze.vue'
 import BatchAnalyze from './components/BatchAnalyze.vue'
 import JobsView from './components/JobsView.vue'
 import SettingsView from './components/SettingsView.vue'
-import { getApiBase, API_BASE_EVENT, isAuthenticated, getAuthEmail, AUTH_EVENT } from './api'
+import LoginView from './components/LoginView.vue'
+import { getApiBase, API_BASE_EVENT, isAuthenticated, getAuthEmail, AUTH_EVENT, logout } from './api'
 
 const initialSavedTab = localStorage.getItem('uiTab')
-const tab = ref(isAuthenticated() ? (initialSavedTab || 'single') : 'settings')
+const tab = ref(isAuthenticated() ? (initialSavedTab || 'single') : 'login')
 const apiBase = ref(getApiBase())
 const authed = ref(isAuthenticated())
 const authEmail = ref(getAuthEmail())
+const showAuthMenu = ref(false)
 
 const tabs = [
   { id: 'single', label: 'Single Analysis', icon: 'fas fa-file-pdf' },
   { id: 'batch', label: 'Batch Analysis', icon: 'fas fa-layer-group' },
   { id: 'jobs', label: 'Jobs', icon: 'fas fa-list-check' },
   { id: 'health', label: 'System Health', icon: 'fas fa-heartbeat' },
-  { id: 'settings', label: 'Settings', icon: 'fas fa-cog' }
+  { id: 'settings', label: 'Settings', icon: 'fas fa-cog' },
+  { id: 'login', label: 'Login', icon: 'fas fa-sign-in-alt' }
 ]
 
 const visibleTabs = computed(() => {
-  if (!authed.value) return tabs.filter(t => t.id === 'settings')
-  return tabs
+  if (!authed.value) return tabs.filter(t => t.id === 'login')
+  return tabs.filter(t => t.id !== 'login')
 })
 
 function onTabClick(id) {
-  if (!authed.value && id !== 'settings') {
-    tab.value = 'settings'
+  if (!authed.value && id !== 'login') {
+    tab.value = 'login'
     return
   }
   tab.value = id
@@ -102,29 +116,63 @@ const onAuthChange = () => {
     if (!wasAuthed) {
       tab.value = 'single'
     }
-  } else if (tab.value !== 'settings') {
-    tab.value = 'settings'
+  } else {
+    showAuthMenu.value = false
+    if (tab.value !== 'login') {
+      tab.value = 'login'
+    }
   }
+}
+
+function onStorage(e) {
+  if (e.key === 'apiBase') onBaseChange()
+  if (e.key === 'uiTab' && typeof e.newValue === 'string') onTabClick(e.newValue)
 }
 
 onMounted(() => {
   window.addEventListener(API_BASE_EVENT, onBaseChange)
   window.addEventListener(AUTH_EVENT, onAuthChange)
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'apiBase') onBaseChange()
-    if (e.key === 'uiTab' && typeof e.newValue === 'string') onTabClick(e.newValue)
-  })
+  window.addEventListener('storage', onStorage)
+  window.addEventListener('click', onWindowClick)
   onAuthChange()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener(API_BASE_EVENT, onBaseChange)
   window.removeEventListener(AUTH_EVENT, onAuthChange)
+  window.removeEventListener('click', onWindowClick)
+  window.removeEventListener('storage', onStorage)
 })
 
 watchEffect(() => {
   try { localStorage.setItem('uiTab', tab.value) } catch (_) {}
 })
+
+function onAuthChipClick() {
+  if (authed.value) {
+    showAuthMenu.value = !showAuthMenu.value
+  } else {
+    tab.value = 'login'
+  }
+}
+
+function goToSettings() {
+  tab.value = 'settings'
+  showAuthMenu.value = false
+}
+
+function onLogout() {
+  logout()
+  showAuthMenu.value = false
+  tab.value = 'login'
+}
+
+function onWindowClick(e) {
+  const t = e.target
+  if (!(t && typeof t.closest === 'function' && t.closest('.auth-wrapper'))) {
+    showAuthMenu.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -168,6 +216,61 @@ watchEffect(() => {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
+}
+
+.auth-chip:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.auth-wrapper {
+  position: relative;
+}
+
+.auth-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #111827;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  padding: 0.25rem;
+  z-index: 1000;
+  backdrop-filter: blur(6px);
+}
+
+.auth-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.auth-menu-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.auth-menu-item i {
+  width: 18px;
+  text-align: center;
+}
+
+.auth-menu-item.danger {
+  color: #b91c1c;
+}
+
+.auth-menu-item.danger:hover {
+  background: rgba(185, 28, 28, 0.08);
 }
 
 .logo-section {

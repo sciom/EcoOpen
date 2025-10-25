@@ -29,17 +29,21 @@ FastAPI + Vue app that extracts structured research metadata from PDF papers: DO
 ## Authenticate
 All analyze endpoints require auth. Register or login to obtain a bearer token.
 
+Password requirements: at least 8 characters and must include letters and numbers. Registration requires `password_confirm` to match `password`.
+
 ```bash
-# Register
+# Register (requires password_confirm)
 curl -sS -X POST -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"secret"}' \
+  -d '{"email":"you@example.com","password":"Abcdef12","password_confirm":"Abcdef12"}' \
   http://localhost:8000/auth/register
 
 # Login → TOKEN
 TOKEN=$(curl -sS -X POST -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"secret"}' \
+  -d '{"email":"you@example.com","password":"Abcdef12"}' \
   http://localhost:8000/auth/login | jq -r .access_token)
 ```
+
+Frontend tip: the UI auto‑logs in after a successful registration.
 
 ## Quick analyze
 Analyze a single PDF synchronously (no MongoDB needed):

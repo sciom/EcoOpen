@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Optional, Dict, Any, Tuple
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -71,8 +72,15 @@ async def register(body: Dict[str, Any]):
 
     email = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
+    password_confirm = body.get("password_confirm") or ""
     if not email or not password:
         raise HTTPException(status_code=400, detail="email and password are required")
+
+    if password != password_confirm:
+        raise HTTPException(status_code=400, detail="password and password_confirm do not match")
+
+    if len(password) < 8 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include letters and numbers")
 
     db = get_db()
     existing = await db["users"].find_one({"email": email})

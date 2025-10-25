@@ -26,6 +26,18 @@ FastAPI + Vue app that extracts structured research metadata from PDF papers: DO
   - `cd frontend && npm install && npm run dev` → http://localhost:5173
   - To point the UI at a custom API URL, create `frontend/.env` with `VITE_API_BASE=http://localhost:8000`
 
+## Deploy
+- One‑shot deploy with systemd + nginx:
+  - `./deploy.sh` (builds frontend, installs backend deps, reloads services)
+  - Flags:
+    - `SKIP_FRONTEND=1` skip building the frontend
+    - `INSTALL_BACKEND=0` don’t (re)install Python deps
+    - `DISABLE_CONFLICTING_SITES=0` keep other nginx sites
+    - `PUBLIC_BASE=https://ecoopen.sciom.net` override public health url
+- Verify:
+  - Local: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3290/health` → `200`
+  - Public: `curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC_BASE/api/health"` → `200`
+
 ## Authenticate
 All analyze endpoints require auth. Register or login to obtain a bearer token.
 

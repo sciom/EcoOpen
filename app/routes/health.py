@@ -44,32 +44,73 @@ async def health() -> HealthModel:
     except Exception:
         agent_ok = False
 
-    # Check embeddings (Ollama host + required embed model available)
+    # Check embeddings backend
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{settings.OLLAMA_HOST.rstrip('/')}/api/tags")
-            if r.status_code < 500:
-                embed_ok = True
-                try:
-                    data = r.json()
-                    models = data.get("models") or []
-                    names = {m.get("name") or m.get("model") for m in models}
-                    # Accept names that match exactly or with a tag suffix like ":latest"
-                    required = settings.OLLAMA_EMBED_MODEL
-                    found = False
-                    for n in names:
-                        if not n:
-                            continue
-                        if n == required or n.startswith(f"{required}:"):
-                            found = True
-                            break
-                    if not found:
-                        embed_ok = False
-                except Exception:
-                    # If we can't parse, leave embed_ok as host reachability indicator
-                    pass
-            else:
-                embed_ok = False
+        if (settings.EMBEDDINGS_BACKEND or "ollama").lower() == "endpoint":
+            # Use AGENT_BASE_URL and verify the embedding model exists in /models
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                headers = {}
+                if settings.AGENT_API_KEY:
+                    headers["Authorization"] = f"Bearer {settings.AGENT_API_KEY}"
+                base = settings.AGENT_BASE_URL.rstrip("/")
+                bases = {base, base.removesuffix("/v1")} if base.endswith("/v1") else {base}
+                paths = []
+                for b in bases:
+                    paths.extend([f"{b}/models", f"{b}/v1/models"])  # OpenAI-compatible
+                for url in paths:
+                    try:
+                        r = await client.get(url, headers=headers)
+                    except Exception:
+                        continue
+                    if r.status_code < 500:
+                        embed_ok = True
+                        try:
+                            data = r.json()
+                            items = data.get("data") or data.get("models") or []
+                            required = settings.AGENT_EMBED_MODEL
+                            found = False
+                            for it in items:
+                                if isinstance(it, dict):
+                                    mid = it.get("id") or it.get("model") or it.get("name")
+                                else:
+                                    mid = str(it)
+                                if not mid:
+                                    continue
+                                if mid == required or str(mid).startswith(f"{required}:"):
+                                    found = True
+                                    break
+                            if not found and items:
+                                embed_ok = False
+                        except Exception:
+                            # If parsing fails, leave embed_ok as reachability indicator
+                            pass
+                        break
+        else:
+            # Ollama host + required embed model available
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(f"{settings.OLLAMA_HOST.rstrip('/')}/api/tags")
+                if r.status_code < 500:
+                    embed_ok = True
+                    try:
+                        data = r.json()
+                        models = data.get("models") or []
+                        names = {m.get("name") or m.get("model") for m in models}
+                        # Accept names that match exactly or with a tag suffix like ":latest"
+                        required = settings.OLLAMA_EMBED_MODEL
+                        found = False
+                        for n in names:
+                            if not n:
+                                continue
+                            if n == required or str(n).startswith(f"{required}:"):
+                                found = True
+                                break
+                        if not found:
+                            embed_ok = False
+                    except Exception:
+                        # If we can't parse, leave embed_ok as host reachability indicator
+                        pass
+                else:
+                    embed_ok = False
     except Exception:
         embed_ok = False
 

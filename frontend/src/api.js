@@ -1,14 +1,29 @@
 export const API_BASE_EVENT = 'api-base-changed'
 export const AUTH_EVENT = 'auth-changed'
 
-const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE || '/api'
 const TOKEN_KEY = 'authToken'
 const EMAIL_KEY = 'authEmail'
 
 export function getApiBase() {
   try {
     const v = localStorage.getItem('apiBase')
-    return (v && v.trim()) ? v.trim() : DEFAULT_API_BASE
+    const trimmed = (v && v.trim()) ? v.trim() : ''
+    if (trimmed) {
+      try {
+        if (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:') {
+          // Auto-reset stale localhost override when running over HTTPS (production)
+          const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(trimmed)
+          if (isLocalhost) {
+            localStorage.removeItem('apiBase')
+            try { if (typeof window !== 'undefined') window.dispatchEvent(new Event(API_BASE_EVENT)) } catch (_) {}
+            return DEFAULT_API_BASE
+          }
+        }
+      } catch (_) {}
+      return trimmed
+    }
+    return DEFAULT_API_BASE
   } catch (_) {
     return DEFAULT_API_BASE
   }

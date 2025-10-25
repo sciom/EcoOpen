@@ -1,0 +1,17 @@
+[Unit]
+Description=EcoOpen API Service
+After=network.target
+
+[Service]
+Type=simple
+User=server
+WorkingDirectory=/home/server/services/EcoOpen
+EnvironmentFile=/home/server/services/EcoOpen/.env
+ExecStart=/home/server/services/EcoOpen/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 3290
+Restart=always
+RestartSec=5
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

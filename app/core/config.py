@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")  # DEBUG|INFO|WARNING|ERROR|CRITICAL
 
     # Auth
-    ADMIN_EMAILS: List[str] = Field(default_factory=list)
+    ADMIN_EMAILS: Any = Field(default_factory=list)
     JWT_SECRET: str = Field(default="change-me-in-prod")
     JWT_ALGORITHM: str = Field(default="HS256")
     JWT_EXPIRES_MINUTES: int = Field(default=60, ge=5, le=7 * 24 * 60)
@@ -142,8 +142,10 @@ class Settings(BaseSettings):
     @field_validator("ADMIN_EMAILS", mode="before")
     @classmethod
     def _parse_admin_emails(cls, v: Any) -> List[str]:
+        # Accept list, JSON array string, comma-separated string, or empty
         if v is None:
             return []
+        # pydantic-settings may pre-decode complex env values as JSON; tolerate decode errors
         if isinstance(v, list):
             return [str(e).strip().lower() for e in v if str(e).strip()]
         if isinstance(v, str):
@@ -156,8 +158,10 @@ class Settings(BaseSettings):
                     if isinstance(arr, list):
                         return [str(e).strip().lower() for e in arr if str(e).strip()]
                 except Exception:
+                    # Fall through to comma parsing if JSON invalid
                     pass
             return [p.strip().lower() for p in s.split(",") if p.strip()]
+        # As a last resort, attempt to iterate
         try:
             return [str(e).strip().lower() for e in list(v) if str(e).strip()]
         except Exception:
@@ -170,4 +174,5 @@ class Settings(BaseSettings):
             return "ws://localhost:5174"
         return str(v).strip()
 
+# Initialize settings once for application use
 settings = Settings()

@@ -22,6 +22,8 @@ from app.services.mongo_ops import (
     append_job_log,
     get_running_job,
     promote_next_pending_job,
+    create_job,
+    set_document_job_id,
 )
 
 
@@ -48,6 +50,10 @@ async def _claim_next_document() -> Optional[dict]:
         if promoted:
             jid = str(promoted.get("_id"))
             claim_filter["job_id"] = jid
+            try:
+                await append_job_log(jid, op="job_started")
+            except Exception:
+                pass
         else:
             # No running/pending jobs; allow jobless documents to proceed
             claim_filter = {"status": "queued", "$or": [{"job_id": None}, {"job_id": {"$exists": False}}]}
@@ -62,6 +68,12 @@ async def _claim_next_document() -> Optional[dict]:
     )
     if doc:
         logger.debug("Claimed document %s for processing", str(doc.get("_id")))
+        try:
+            jid = doc.get("job_id")
+            if jid:
+                await append_job_log(jid, op="doc_claimed", doc_id=str(doc.get("_id")), filename=(doc.get("filename") or "document.pdf").replace(os.sep, "_"))
+        except Exception:
+            pass
     return doc
 
 
@@ -148,6 +160,13 @@ async def _process_one(doc: dict) -> None:
                 # File already removed or doesn't exist
                 pass
 
+    # On success, append a completion log
+    if job_id and (await get_job(job_id)):
+        try:
+            await append_job_log(job_id, op="doc_done", doc_id=doc_id, filename=filename)
+        except Exception:
+            pass
+
     # Update job progress regardless of success or error
     if job_id:
         await inc_job_progress(job_id, by=1)
@@ -157,6 +176,10 @@ async def _process_one(doc: dict) -> None:
             total = ((job.get("progress") or {}).get("total")) or 0
             if cur >= total and (job.get("status") != "done"):
                 await set_job_status(job_id, "done")
+                try:
+                    await append_job_log(job_id, op="job_done")
+                except Exception:
+                    pass
                 # After finishing a job, try to promote the next one
                 try:
                     await promote_next_pending_job()

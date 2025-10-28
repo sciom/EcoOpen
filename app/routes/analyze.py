@@ -150,6 +150,8 @@ async def analyze(file: UploadFile = File(...),
             set_document_status,
             set_document_analysis,
             get_document,
+            create_job,
+            set_document_job_id,
         )  # type: ignore
     except ImportError:
         # If queue was explicitly requested, surface 503. Otherwise, fall back to sync.
@@ -195,6 +197,9 @@ async def analyze(file: UploadFile = File(...),
         user_id=(user["id"] if user else None),
     )
 
+    # Create a job per single analyze to enable job logs
+    job_id = await create_job(total=1, document_ids=[doc_id], user_id=(user["id"] if user else None))
+    await set_document_job_id(doc_id, job_id)
     await set_document_status(doc_id, "queued")
 
     # Poll for a short period for worker result; fall back to sync

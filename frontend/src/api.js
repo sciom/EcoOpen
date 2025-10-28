@@ -4,6 +4,8 @@ export const AUTH_EVENT = 'auth-changed'
 const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE || '/api'
 const TOKEN_KEY = 'authToken'
 const EMAIL_KEY = 'authEmail'
+const IS_ADMIN_KEY = 'authIsAdmin'
+const USER_ID_KEY = 'authUserId'
 
 export function getApiBase() {
   try {
@@ -49,6 +51,12 @@ export function getAuthToken() {
 export function getAuthEmail() {
   try { return localStorage.getItem(EMAIL_KEY) || '' } catch (_) { return '' }
 }
+export function getIsAdmin() {
+  try { return localStorage.getItem(IS_ADMIN_KEY) === '1' } catch (_) { return false }
+}
+export function getAuthUserId() {
+  try { return localStorage.getItem(USER_ID_KEY) || '' } catch (_) { return '' }
+}
 export function isAuthenticated() {
   return !!getAuthToken()
 }
@@ -56,6 +64,7 @@ function setAuth(token, email) {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY)
     if (email) localStorage.setItem(EMAIL_KEY, email); else localStorage.removeItem(EMAIL_KEY)
+    if (!token) { localStorage.removeItem(IS_ADMIN_KEY); localStorage.removeItem(USER_ID_KEY) }
     if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
   } catch (_) {}
 }
@@ -92,6 +101,7 @@ export async function login(email, password) {
   const token = data?.access_token || ''
   if (!token) throw new Error('Invalid login response')
   setAuth(token, email)
+  await syncAuthMe().catch(() => {})
   return { ok: true }
 }
 
@@ -118,6 +128,36 @@ export async function getConfig() {
     throw new Error(`Config fetch failed: ${r.status} ${r.statusText}${body ? ' - ' + body : ''}`)
   }
   return r.json()
+}
+
+export async function getMe() {
+  const base = getApiBase()
+  const r = await fetch(`${base}/auth/me`, { headers: { ...authHeaders() } })
+  if (r.status === 401) {
+    logout()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
+  }
+  if (!r.ok) {
+    const t = await r.text().catch(() => '')
+    throw new Error(friendlyErrorText(r.status, t))
+  }
+  return r.json()
+}
+
+export async function syncAuthMe() {
+  try {
+    if (!isAuthenticated()) return
+    const me = await getMe()
+    const isAdmin = !!me?.is_admin
+    const userId = me?.id || me?._id || ''
+    try {
+      localStorage.setItem(IS_ADMIN_KEY, isAdmin ? '1' : '0')
+      if (userId) localStorage.setItem(USER_ID_KEY, String(userId))
+    } catch (_) {}
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
+  } catch (_) {
+    // ignore
+  }
 }
 
 function friendlyErrorText(status, rawText) {
@@ -208,9 +248,14 @@ export async function getTasks(params = {}) {
   return r.json()
 }
 
-export async function getTaskDetail(jobId) {
+
+export async function getJobLogs(jobId, params = {}) {
   const base = getApiBase()
-  const r = await fetch(`${base}/tasks/${jobId}`, { headers: { ...authHeaders() } })
+  const qp = new URLSearchParams()
+  if (params.limit) qp.set('limit', String(params.limit))
+  if (params.since) qp.set('since', String(params.since))
+  const url = qp.toString() ? `${base}/tasks/${jobId}/logs?${qp.toString()}` : `${base}/tasks/${jobId}/logs`
+  const r = await fetch(url, { headers: { ...authHeaders() } })
   if (r.status === 401) {
     logout()
     if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
@@ -225,6 +270,20 @@ export async function getTaskDetail(jobId) {
 export async function cancelTask(jobId) {
   const base = getApiBase()
   const r = await fetch(`${base}/tasks/${jobId}/cancel`, { method: 'POST', headers: { ...authHeaders() } })
+  if (r.status === 401) {
+    logout()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
+  }
+  if (!r.ok) {
+    const t = await r.text().catch(() => '')
+    throw new Error(friendlyErrorText(r.status, t))
+  }
+  return r.json()
+}
+
+export async function deleteTask(jobId) {
+  const base = getApiBase()
+  const r = await fetch(`${base}/tasks/${jobId}/delete`, { method: 'POST', headers: { ...authHeaders() } })
   if (r.status === 401) {
     logout()
     if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))

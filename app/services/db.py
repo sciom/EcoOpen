@@ -54,6 +54,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await Database.db["jobs"].create_index("status")
     await Database.db["jobs"].create_index("user_id")
     await Database.db["users"].create_index("email", unique=True)
+    # Job logs indexes
+    await Database.db["job_logs"].create_index([("job_id", 1), ("ts", 1)])
+    await Database.db["job_logs"].create_index("ts")
 
     try:
         yield
@@ -102,3 +105,4 @@ async def read_file_to_path(file_id: str, path: str) -> None:
                     pass
             except Exception:
                 pass
+

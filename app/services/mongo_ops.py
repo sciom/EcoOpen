@@ -125,3 +125,90 @@ async def list_all_jobs(limit: int = 100, status: Optional[str] = None) -> List[
 async def set_document_job_id(doc_id: str, job_id: str) -> None:
     db = get_db()
     await db["documents"].update_one({"_id": ObjectId(doc_id)}, {"$set": {"job_id": job_id, "updated_at": now_utc()}})
+
+
+# --- Job logs ---
+async def append_job_log(
+    job_id: str,
+    *,
+    level: str = "info",
+    op: Optional[str] = None,
+    message: Optional[str] = None,
+    doc_id: Optional[str] = None,
+    filename: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    ts: Optional[dt.datetime] = None,
+) -> None:
+    """Append a log entry to the job_logs collection for the given job."""
+    db = get_db()
+    entry: Dict[str, Any] = {
+        "job_id": job_id,
+        "ts": ts or now_utc(),
+        "level": level,
+    }
+    if op:
+        entry["op"] = op
+    if message:
+        entry["message"] = message
+    if doc_id:
+        entry["doc_id"] = doc_id
+    if filename:
+        entry["filename"] = filename
+    if duration_ms is not None:
+        entry["duration_ms"] = int(duration_ms)
+    if extra:
+        try:
+            # Avoid nesting very large data; shallow copy
+            entry["extra"] = dict(extra)
+        except Exception:
+            entry["extra"] = {"note": "unserializable extra"}
+    await db["job_logs"].insert_one(entry)
+
+
+async def list_job_logs(job_id: str, *, limit: int = 200, since: Optional[dt.datetime] = None) -> List[Dict[str, Any]]:
+    """List recent job logs ordered by timestamp ascending."""
+    db = get_db()
+    q: Dict[str, Any] = {"job_id": job_id}
+    if since is not None:
+        q["ts"] = {"$gte": since}
+    cur = db["job_logs"].find(q).sort("ts", 1).limit(limit)
+    return await cur.to_list(length=limit)
+
+
+# --- Job dispatching helpers ---
+async def get_running_job() -> Optional[Dict[str, Any]]:
+    """Return the currently running job if any."""
+    db = get_db()
+    return await db["jobs"].find_one({"status": "running"})
+
+
+async def promote_next_pending_job() -> Optional[Dict[str, Any]]:
+    """Promote the oldest pending job to running if none is running.
+
+    Returns the promoted job document, or None if no promotion occurred.
+    """
+    db = get_db()
+    # If a job is already running, do nothing
+    existing = await db["jobs"].find_one({"status": "running"})
+    if existing:
+        return None
+    now = now_utc()
+    try:
+        from pymongo import ReturnDocument  # type: ignore
+    except Exception:
+        # Fallback: return without promotion if pymongo isn't available for sort/return options
+        return None
+    job = await db["jobs"].find_one_and_update(
+        {"status": "pending"},
+        {"$set": {"status": "running", "started_at": now, "updated_at": now}},
+        sort=[("created_at", 1)],
+        return_document=ReturnDocument.AFTER,
+    )
+    return job
+
+
+async def list_pending_jobs(limit: int = 100) -> List[Dict[str, Any]]:
+    db = get_db()
+    cur = db["jobs"].find({"status": "pending"}).sort("created_at", 1).limit(limit)
+    return await cur.to_list(length=limit)

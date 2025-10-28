@@ -4,6 +4,7 @@
       <h2 class="section-title">
         <i class="fas fa-list-check"></i>
         Jobs
+        <span v-if="isAdmin" class="admin-badge"><i class="fas fa-shield-alt"></i> Admin</span>
       </h2>
       <p class="section-description">
         Monitor and manage your recent and running analyses.
@@ -112,19 +113,22 @@
             <button class="action success" :disabled="j.status !== 'done'" @click="onExport(j.job_id)">
               <i class="fas fa-file-csv"></i> CSV
             </button>
-            <button class="action danger" :disabled="j.status !== 'running' && j.status !== 'pending'" @click="onCancel(j.job_id)">
+            <button class="action danger" :disabled="!canCancel(j)" @click="onCancel(j.job_id)">
               <i class="fas fa-ban"></i> Cancel
+            </button>
+            <button v-if="isAdmin" class="action danger" @click="onDelete(j.job_id)">
+              <i class="fas fa-trash"></i> Delete
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <div v-if="detail" class="detail-modal" @click.self="detail = null">
+    <div v-if="detail" class="detail-modal" @click.self="closeDetail()">
       <div class="detail-card">
         <div class="detail-header">
           <h3><i class="fas fa-eye"></i> Job Detail</h3>
-          <button class="close" @click="detail = null"><i class="fas fa-times"></i></button>
+          <button class="close" @click="closeDetail()"><i class="fas fa-times"></i></button>
         </div>
         <div class="detail-body">
           <div class="detail-meta">
@@ -173,6 +177,41 @@
             </div>
           </div>
 
+          <div v-if="isAdmin" class="logs-panel">
+            <div class="logs-header">
+              <h4><i class="fas fa-stream"></i> Logs</h4>
+              <div class="logs-controls">
+                <label>Limit <input type="number" min="10" max="2000" v-model.number="logsLimit" @change="resetLogs()" /></label>
+                <button class="action" @click="resetLogs()"><i :class="logsLoading ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i> Refresh</button>
+              </div>
+            </div>
+            <div v-if="logsError" class="error-block"><i class="fas fa-exclamation-triangle"></i> {{ logsError }}</div>
+            <div class="logs-list" :class="{ loading: logsLoading }">
+              <div v-if="!logs.length && !logsLoading" class="empty-state"><i class="fas fa-inbox"></i><p>No logs yet.</p></div>
+              <div v-else class="log-row" v-for="(row, idx) in logs" :key="idx">
+                <div class="log-left">
+                  <div class="ts">{{ fmtDate(row.ts) }}</div>
+                  <div class="level" :class="row.level || 'info'">{{ (row.level || 'info').toUpperCase() }}</div>
+                </div>
+                <div class="log-main">
+                  <div class="line">
+                    <span v-if="row.op" class="op">[{{ row.op }}]</span>
+                    <span class="msg">{{ row.message || '' }}</span>
+                    <span v-if="row.duration_ms != null" class="dur">{{ row.duration_ms }}ms</span>
+                  </div>
+                  <div class="meta">
+                    <span v-if="row.filename" class="chip"><i class="fas fa-file"></i> {{ row.filename }}</span>
+                    <span v-if="row.doc_id" class="chip mono"><i class="fas fa-hashtag"></i> {{ row.doc_id }}</span>
+                  </div>
+                  <details v-if="row.extra && (row.extra.error || row.extra.trace)" class="extra">
+                    <summary><i class="fas fa-bug"></i> Error details</summary>
+                    <pre>{{ pretty(row.extra) }}</pre>
+                  </details>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <details class="raw-json">
             <summary><i class="fas fa-code"></i> Raw JSON</summary>
             <pre>{{ pretty(detail) }}</pre>
@@ -185,7 +224,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { getTasks, getTaskDetail, cancelTask, exportCsv, AUTH_EVENT, isAuthenticated } from '../api'
+import { getTasks, getJob, cancelTask, exportCsv, deleteTask, getJobLogs, AUTH_EVENT, isAuthenticated, getIsAdmin, getAuthUserId, syncAuthMe } from '../api'
 
 const jobs = ref([])
 const status = ref('')
@@ -196,7 +235,14 @@ const autoRefresh = ref(true)
 const refreshMs = 1200
 let timer = null
 
-const detail = ref(null)
+  const detail = ref(null)
+  const logs = ref([])
+  const logsLoading = ref(false)
+  const logsError = ref('')
+  const logsLimit = ref(200)
+  let logsTimer = null
+  let logsSinceIso = ''
+
 
 function statusIcon(s) {
   switch (s) {
@@ -221,6 +267,15 @@ function pct(j) {
   const cur = j?.progress?.current || 0
   const tot = j?.progress?.total || 0
   return tot ? Math.round((cur / tot) * 100) : 0
+}
+
+function canCancel(j) {
+  const terminal = j?.status !== 'running' && j?.status !== 'pending'
+  if (terminal) return false
+  if (isAdmin.value) return true
+  const meId = getAuthUserId()
+  if (j?.user_id) return String(j.user_id) === String(meId)
+  return false
 }
 
 function fmtDate(v) {
@@ -257,8 +312,17 @@ function manualRefresh() {
 
 async function viewDetail(jobId) {
   try {
-    const data = await getTaskDetail(jobId)
+    const data = await getJob(jobId)
     detail.value = data
+    // Reset and start fetching logs if admin
+    logs.value = []
+    logsError.value = ''
+    logsSinceIso = ''
+    if (isAdmin.value) {
+      await fetchLogs()
+      if (logsTimer) clearInterval(logsTimer)
+      logsTimer = setInterval(() => { fetchLogs().catch(() => {}) }, 1500)
+    }
   } catch (e) {
     error.value = String(e)
   }
@@ -281,19 +345,46 @@ async function onExport(jobId) {
   }
 }
 
-const authed = ref(isAuthenticated())
-function updateAuthed() { authed.value = isAuthenticated() }
+async function onDelete(jobId) {
+  try {
+    if (!isAdmin.value) return
+    if (!confirm('Delete this job and its files? This cannot be undone.')) return
+    await deleteTask(jobId)
+    await refresh()
+  } catch (e) {
+    error.value = String(e)
+  }
+}
 
-onMounted(() => {
+const authed = ref(isAuthenticated())
+const isAdmin = ref(getIsAdmin())
+const authUserId = ref(getAuthUserId())
+function updateAuthed() { authed.value = isAuthenticated(); isAdmin.value = getIsAdmin(); authUserId.value = getAuthUserId() }
+
+onMounted(async () => {
   window.addEventListener(AUTH_EVENT, updateAuthed)
+  updateAuthed()
+  await syncAuthMe().catch(() => {})
   updateAuthed()
   refresh()
   timer = setInterval(() => { if (autoRefresh.value) refresh() }, refreshMs)
 })
 
+function closeDetail() {
+  detail.value = null
+  if (logsTimer) { clearInterval(logsTimer); logsTimer = null }
+}
+
+function resetLogs() {
+  logs.value = []
+  logsSinceIso = ''
+  fetchLogs().catch(() => {})
+}
+
 onUnmounted(() => {
   window.removeEventListener(AUTH_EVENT, updateAuthed)
   if (timer) clearInterval(timer)
+  if (logsTimer) clearInterval(logsTimer)
 })
 
 watch([status, limit], () => refresh())
@@ -307,6 +398,31 @@ function doiHref(doi) {
 function pretty(obj) {
   try { return JSON.stringify(obj, null, 2) } catch { return String(obj) }
 }
+
+async function fetchLogs() {
+  if (!detail.value || !detail.value.job_id || !isAdmin.value) return
+  try {
+    logsLoading.value = true
+    logsError.value = ''
+    const params = { limit: logsLimit.value }
+    if (logsSinceIso) params.since = logsSinceIso
+    const rows = await getJobLogs(detail.value.job_id, params)
+    if (Array.isArray(rows) && rows.length) {
+      logs.value.push(...rows)
+      // Update since to last ts (use +00:00 instead of Z for Python)
+      const last = rows[rows.length - 1]
+      try {
+        let iso = new Date(last.ts).toISOString()
+        if (iso && iso.endsWith('Z')) iso = iso.replace('Z', '+00:00')
+        if (iso) logsSinceIso = iso
+      } catch (_) {}
+    }
+  } catch (e) {
+    logsError.value = String(e)
+  } finally {
+    logsLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -315,6 +431,7 @@ function pretty(obj) {
 .section-title { display:flex; align-items:center; justify-content:center; gap:0.75rem; font-size:2rem; font-weight:600; color:#1a202c; margin:0 0 0.5rem 0; }
 .section-title i { color:#0ea5e9; }
 .section-description { color:#718096; margin:0; }
+.admin-badge { margin-left: .5rem; font-size: .85rem; display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .5rem; border-radius:999px; background:#ebf8ff; color:#2c5282; border:1px solid #90cdf4; }
 
 .controls-row { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1rem; flex-wrap:wrap; }
 .filters { display:flex; align-items:center; gap:0.5rem; background:#f7fafc; padding:0.5rem 0.75rem; border:1px solid #e2e8f0; border-radius:10px; }

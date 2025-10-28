@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 import httpx
+import logging
+import time
 
 from app.core.config import settings
 from app.core.errors import LLMServiceError
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,20 +38,23 @@ class HttpLLMClient(LLMClient):
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         # Always use OpenAI-compatible v1 route
+        base = self._base
+        try:
+            base = base.removesuffix("/v1")
+        except Exception:
+            pass
+        url = f"{base}/v1/chat/completions"
+        t0 = time.perf_counter()
+        status_val: Optional[int] = None
         try:
             with httpx.Client(timeout=float(settings.AGENT_TIMEOUT_SECONDS)) as client:
-                base = self._base
-                try:
-                    base = base.removesuffix("/v1")
-                except Exception:
-                    pass
-                url = f"{base}/v1/chat/completions"
                 payload = {
                     "model": m,
                     "messages": [{"role": x.role, "content": x.content} for x in messages],
                     "temperature": temperature,
                 }
                 r = client.post(url, json=payload, headers=headers)
+                status_val = r.status_code
                 if 200 <= r.status_code < 300:
                     data = r.json()
                     if isinstance(data, dict) and "choices" in data:
@@ -64,6 +72,18 @@ class HttpLLMClient(LLMClient):
             raise LLMServiceError(f"LLM service unavailable: {e}")
         except Exception as e:
             raise LLMServiceError(f"LLM service error: {e}")
+        finally:
+            dt_ms = int((time.perf_counter() - t0) * 1000)
+            parts = [
+                f"op=llm_http",
+                f"url={url}",
+                f"model={m}",
+                f"temperature={temperature}",
+                f"status={status_val if status_val is not None else 'exception'}",
+                f"duration_ms={dt_ms}",
+            ]
+            # Emit single-line structured timing log
+            logger.info(" ".join(parts))
 
 
 class McpLLMClient(LLMClient):

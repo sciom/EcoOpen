@@ -1,4 +1,5 @@
 import re
+import logging
 from typing import List, Optional, Tuple
 from uuid import uuid4
 from urllib.parse import urlparse, urlunparse
@@ -21,6 +22,9 @@ from app.core.errors import (
 )
 from app.services.llm_client import get_llm_client, ChatMessage
 from app.core.validation import validate_doi, validate_url
+from app.services import log_timing
+
+logger = logging.getLogger(__name__)
 
 
 class EndpointEmbeddings(Embeddings):
@@ -77,8 +81,11 @@ class AgentRunner:
     combined with an OpenAI-compatible LLM endpoint for extraction.
     """
 
-    def __init__(self) -> None:
-        """Initialize the agent runner with embeddings, vector store, and LLM configuration."""
+    def __init__(self, context: Optional[dict] = None) -> None:
+        """Initialize the agent runner with embeddings, vector store, and LLM configuration.
+        Optionally accept a correlation context (e.g., doc_id, job_id, filename) for logging.
+        """
+        self._ctx = context or {}
         # Embeddings backend selection
         self._embed_backend = (settings.EMBEDDINGS_BACKEND or "ollama").lower()
         if self._embed_backend == "endpoint":
@@ -116,7 +123,8 @@ class AgentRunner:
             ChatMessage(role="system", content=system_prompt),
             ChatMessage(role="user", content=user_prompt),
         ]
-        return client.chat_complete(messages, model=self._agent_model, temperature=0.0)
+        with log_timing(logger, "llm_chat", model=self._agent_model, **self._ctx):
+            return client.chat_complete(messages, model=self._agent_model, temperature=0.0)
 
     def _load_pdf(self, pdf_path: str) -> str:
         try:
@@ -298,8 +306,10 @@ class AgentRunner:
 
     def analyze(self, pdf_path: str) -> PDFAnalysisResultModel:
         # Load and clean text
-        raw_text = self._load_pdf(pdf_path)
-        normalized = self._normalize_text(raw_text)
+        with log_timing(logger, "load_pdf", **self._ctx):
+            raw_text = self._load_pdf(pdf_path)
+        with log_timing(logger, "normalize_text", **self._ctx):
+            normalized = self._normalize_text(raw_text)
 
         # Heuristic extraction
         data_heading_variants = [
@@ -340,9 +350,11 @@ class AgentRunner:
         code_stmt_heur = self._extract_by_headings(normalized, code_heading_variants) or self._extract_by_phrases(normalized, code_phrase_variants)
 
         # Chunk and build vector store
-        chunks = self._chunk(normalized)
+        with log_timing(logger, "chunk_text", **self._ctx):
+            chunks = self._chunk(normalized)
         try:
-            vs = self._vector_store(chunks)
+            with log_timing(logger, "build_vector_store", backend=self._embed_backend, **self._ctx):
+                vs = self._vector_store(chunks)
         except Exception as e:
             msg = str(e)
             if self._embed_backend == "ollama" and (("model \"" in msg and "not found" in msg) or ("No such model" in msg) or ("not available" in msg)):

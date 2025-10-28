@@ -53,9 +53,15 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 TOKEN=$(curl -sS -X POST -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"Abcdef12"}' \
   http://localhost:8000/auth/login | jq -r .access_token)
+
+# Current user and admin flag
+curl -sS -H "Authorization: Bearer $TOKEN" http://localhost:8000/auth/me
+# → { "id": "...", "email": "you@example.com", "is_admin": false }
 ```
 
-Frontend tip: the UI auto‑logs in after a successful registration.
+Admin emails are configured via `ADMIN_EMAILS` in environment or `.env` (comma‑separated addresses).
+
+Frontend tip: the UI auto‑logs in after a successful registration and syncs admin/user id state from `/auth/me`.
 
 ## Quick analyze
 Analyze a single PDF synchronously (no MongoDB needed):

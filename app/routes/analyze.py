@@ -263,7 +263,6 @@ async def analyze_batch(files: List[UploadFile] = File(...), user: dict = Depend
             create_job,
             set_document_job_id,
             set_document_status,
-            set_job_status,
         )  # type: ignore
     except ImportError:
         raise HTTPException(status_code=503, detail="Batch analyze requires Mongo dependencies (motor/pymongo).")
@@ -297,9 +296,8 @@ async def analyze_batch(files: List[UploadFile] = File(...), user: dict = Depend
         await set_document_job_id(did, job_id)
         await set_document_status(did, "queued")
 
-    await set_job_status(job_id, "running")
-
-    return BatchStatusModel(job_id=job_id, status="running", progress=BatchProgress(current=0, total=len(doc_ids)), results=[])
+    # Leave job in pending; dispatcher/worker will promote when ready
+    return BatchStatusModel(job_id=job_id, status="pending", progress=BatchProgress(current=0, total=len(doc_ids)), results=[])
 
 
 @router.get("/jobs/{job_id}", response_model=BatchStatusModel)
@@ -329,10 +327,20 @@ async def get_job(job_id: str, user: dict = Depends(_get_required_user)):
     progress = job.get("progress") or {"current": 0, "total": len(docs)}
     status = job.get("status") or "pending"
 
+    dur_ms = None
+    try:
+        started_at = job.get("started_at")
+        finished_at = job.get("finished_at")
+        if started_at and finished_at:
+            dur_ms = int((finished_at - started_at).total_seconds() * 1000)
+    except Exception:
+        dur_ms = None
+
     return BatchStatusModel(
         job_id=job_id,
         status=status,
         progress=BatchProgress(current=progress.get("current", 0), total=progress.get("total", len(docs))),
         results=results,
         error=job.get("error"),
+        duration_ms=dur_ms,
     )

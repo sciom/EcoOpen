@@ -17,7 +17,8 @@ def test_sync_analyze_real_pdf():
     # Pick a realistic paper from example_papers
     base = os.path.dirname(os.path.dirname(__file__))
     pdf_path = os.path.join(base, "example_papers", "agostini2021.pdf")
-    assert os.path.exists(pdf_path), "Expected example PDF not found"
+    if not os.path.exists(pdf_path):
+        pytest.skip("Example PDF not present")
 
     runner = AgentRunner()
     try:

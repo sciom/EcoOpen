@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Any
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +9,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.models.schemas import UserPublic, TokenResponse
+from app.models.schemas import UserPublic, TokenResponse, AuthMeResponse
 
 router = APIRouter(prefix="/auth")
 
@@ -118,6 +118,9 @@ async def login(body: Dict[str, Any]):
     return TokenResponse(access_token=token)  # type: ignore
 
 
+# /auth/me defined after get_current_user
+
+
 async def get_bearer_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[str]:
     if not credentials or credentials.scheme.lower() != "bearer":
         return None
@@ -171,3 +174,10 @@ async def get_current_user(token: Optional[str] = Depends(get_bearer_token)) -> 
         raise HTTPException(status_code=503, detail="Auth requires Mongo dependencies (motor/pymongo).")
 
     return {"id": sub, "email": email}
+
+
+@router.get("/me", response_model=AuthMeResponse)
+async def auth_me(user: Dict[str, str] = Depends(get_current_user)):
+    email = (user.get("email") or "").strip().lower()
+    is_admin = email in (settings.ADMIN_EMAILS or [])
+    return AuthMeResponse(id=user["id"], email=email, is_admin=is_admin)  # type: ignore

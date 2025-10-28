@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")  # DEBUG|INFO|WARNING|ERROR|CRITICAL
 
     # Auth
+    ADMIN_EMAILS: List[str] = Field(default_factory=list)
     JWT_SECRET: str = Field(default="change-me-in-prod")
     JWT_ALGORITHM: str = Field(default="HS256")
     JWT_EXPIRES_MINUTES: int = Field(default=60, ge=5, le=7 * 24 * 60)
@@ -137,6 +138,30 @@ class Settings(BaseSettings):
         lv = str(v).strip().upper() if v is not None else "INFO"
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         return lv if lv in allowed else "INFO"
+
+    @field_validator("ADMIN_EMAILS", mode="before")
+    @classmethod
+    def _parse_admin_emails(cls, v: Any) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(e).strip().lower() for e in v if str(e).strip()]
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    arr = json.loads(s)
+                    if isinstance(arr, list):
+                        return [str(e).strip().lower() for e in arr if str(e).strip()]
+                except Exception:
+                    pass
+            return [p.strip().lower() for p in s.split(",") if p.strip()]
+        try:
+            return [str(e).strip().lower() for e in list(v) if str(e).strip()]
+        except Exception:
+            return []
 
     @field_validator("MCP_SERVER_URL", mode="before")
     @classmethod

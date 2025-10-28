@@ -5,10 +5,18 @@ import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.core.config import settings
 from app.models.schemas import BatchStatusModel, BatchProgress, PDFAnalysisResultModel
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/tasks")
+
+def _is_admin(user: dict) -> bool:
+    try:
+        email = (user.get("email") or "").strip().lower()
+    except Exception:
+        return False
+    return email in (settings.ADMIN_EMAILS or [])
 
 
 def _iso(d: object) -> Optional[str]:
@@ -23,11 +31,14 @@ def _iso(d: object) -> Optional[str]:
 @router.get("/", response_model=List[BatchStatusModel])
 async def list_tasks(status: Optional[str] = Query(default=None, pattern="^(pending|running|done|error)$"), limit: int = Query(default=100, ge=1, le=500), user=Depends(get_current_user)):
     try:
-        from app.services.mongo_ops import list_user_jobs  # type: ignore
+        from app.services.mongo_ops import list_user_jobs, list_all_jobs  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Tasks require Mongo dependencies (motor/pymongo).")
 
-    jobs = await list_user_jobs(user_id=user["id"], limit=limit, status=status)
+    if _is_admin(user):
+        jobs = await list_all_jobs(limit=limit, status=status)
+    else:
+        jobs = await list_user_jobs(user_id=user["id"], limit=limit, status=status)
     out: List[BatchStatusModel] = []
     for j in jobs:
         progress = j.get("progress") or {"current": 0, "total": 0}
@@ -51,11 +62,11 @@ async def list_tasks(status: Optional[str] = Query(default=None, pattern="^(pend
 @router.get("/{job_id}", response_model=BatchStatusModel)
 async def get_task(job_id: str, user=Depends(get_current_user)):
     try:
-        from app.services.mongo_ops import get_job_for_user, list_job_documents  # type: ignore
+        from app.services.mongo_ops import get_job_for_user, list_job_documents, get_job  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Tasks require Mongo dependencies (motor/pymongo).")
 
-    job = await get_job_for_user(job_id, user["id"])
+    job = await (get_job(job_id) if _is_admin(user) else get_job_for_user(job_id, user["id"]))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -92,11 +103,11 @@ async def get_task(job_id: str, user=Depends(get_current_user)):
 async def cancel_task(job_id: str, user=Depends(get_current_user)):
     try:
         from app.services.db import get_db  # type: ignore
-        from app.services.mongo_ops import get_job_for_user, set_job_status  # type: ignore
+        from app.services.mongo_ops import get_job_for_user, set_job_status, get_job  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Tasks require Mongo dependencies (motor/pymongo).")
 
-    job = await get_job_for_user(job_id, user["id"])
+    job = await (get_job(job_id) if _is_admin(user) else get_job_for_user(job_id, user["id"]))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 

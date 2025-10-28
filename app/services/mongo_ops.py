@@ -113,6 +113,14 @@ async def list_user_jobs(user_id: str, limit: int = 100, status: Optional[str] =
     cur = db["jobs"].find(q).sort("created_at", -1).limit(limit)
     return await cur.to_list(length=limit)
 
+async def list_all_jobs(limit: int = 100, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    db = get_db()
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    cur = db["jobs"].find(q).sort("created_at", -1).limit(limit)
+    return await cur.to_list(length=limit)
+
 
 async def set_document_job_id(doc_id: str, job_id: str) -> None:
     db = get_db()

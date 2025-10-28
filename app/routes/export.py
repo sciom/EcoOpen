@@ -1,6 +1,6 @@
 import csv
 import io
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
@@ -11,7 +11,7 @@ router = APIRouter()
 
 _security = HTTPBearer(auto_error=False)
 
-async def _get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> str:
+async def _get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> dict:
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Missing bearer token")
     try:
@@ -21,21 +21,30 @@ async def _get_current_user_id(credentials: HTTPAuthorizationCredentials = Depen
     try:
         payload = jwt.decode(credentials.credentials, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         sub = str(payload.get("sub") or "").strip()
+        email = str(payload.get("email") or "").strip()
         if not sub:
             raise HTTPException(status_code=401, detail="Invalid token")
-        return sub
+        return {"id": sub, "email": email}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-@router.get("/export/csv/{job_id}")
-async def export_csv(job_id: str, user_id: str = Depends(_get_current_user_id)):
+def _is_admin(user: dict) -> bool:
     try:
-        from app.services.mongo_ops import get_job_for_user as mongo_get_job_for_user, list_job_documents  # type: ignore
+        email = (user.get("email") or "").strip().lower()
+    except Exception:
+        return False
+    return email in (settings.ADMIN_EMAILS or [])
+
+
+@router.get("/export/csv/{job_id}")
+async def export_csv(job_id: str, user: dict = Depends(_get_current_user)):
+    try:
+        from app.services.mongo_ops import get_job_for_user as mongo_get_job_for_user, list_job_documents, get_job  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Export requires Mongo dependencies (motor/pymongo).")
 
-    job = await mongo_get_job_for_user(job_id, user_id)
+    job = await (get_job(job_id) if _is_admin(user) else mongo_get_job_for_user(job_id, user["id"]))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 

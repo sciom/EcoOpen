@@ -18,6 +18,13 @@ from app.core.errors import (
 
 router = APIRouter()
 
+def _is_admin(user: dict) -> bool:
+    try:
+        email = (user.get("email") or "").strip().lower()
+    except Exception:
+        return False
+    return email in (settings.ADMIN_EMAILS or [])
+
 MAX_BYTES = settings.MAX_FILE_SIZE_MB * 1024 * 1024
 
 _security = HTTPBearer(auto_error=False)
@@ -301,11 +308,12 @@ async def get_job(job_id: str, user: dict = Depends(_get_required_user)):
         from app.services.mongo_ops import (
             get_job_for_user,
             list_job_documents,
+            get_job,
         )  # type: ignore
     except ImportError:
         raise HTTPException(status_code=503, detail="Job status requires Mongo dependencies (motor/pymongo).")
 
-    job = await get_job_for_user(job_id, user["id"])
+    job = await (get_job(job_id) if _is_admin(user) else get_job_for_user(job_id, user["id"]))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 

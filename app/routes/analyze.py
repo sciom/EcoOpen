@@ -198,7 +198,7 @@ async def analyze(file: UploadFile = File(...),
     )
 
     # Create a job per single analyze to enable job logs
-    job_id = await create_job(total=1, document_ids=[doc_id], user_id=(user["id"] if user else None))
+    job_id = await create_job(total=1, document_ids=[doc_id], user_id=(user["id"] if user else None), user_email=(user["email"] if user else None))
     await set_document_job_id(doc_id, job_id)
     await set_document_status(doc_id, "queued")
 
@@ -295,7 +295,7 @@ async def analyze_batch(files: List[UploadFile] = File(...), user: dict = Depend
         )
         doc_ids.append(doc_id)
 
-    job_id = await create_job(total=len(doc_ids), document_ids=doc_ids, user_id=user["id"])
+    job_id = await create_job(total=len(doc_ids), document_ids=doc_ids, user_id=user["id"], user_email=(user.get("email") if user else None))
 
     for did in doc_ids:
         await set_document_job_id(did, job_id)

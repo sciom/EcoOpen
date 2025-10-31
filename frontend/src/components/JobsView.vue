@@ -80,6 +80,13 @@
                 <span class="label">Progress:</span>
                 <span class="value">{{ j.progress?.current || 0 }} / {{ j.progress?.total || 0 }}</span>
               </div>
+              <div class="meta-line" v-if="isAdmin && (j.created_by?.email || j.created_by?.user_id)">
+                <span class="label">Created by:</span>
+                <span class="value">
+                  <template v-if="j.created_by?.email">{{ j.created_by.email }}</template>
+                  <template v-else-if="j.created_by?.user_id">user {{ j.created_by.user_id }}</template>
+                </span>
+              </div>
               <div class="meta-line" v-if="j.created_at">
                 <span class="label">Created:</span>
                 <span class="value">{{ fmtDate(j.created_at) }}</span>
@@ -177,14 +184,17 @@
             </div>
           </div>
 
-          <div v-if="isAdmin" class="logs-panel">
+           <div v-if="isAdmin" class="logs-panel">
             <div class="logs-header">
               <h4><i class="fas fa-stream"></i> Logs</h4>
               <div class="logs-controls">
-                <label>Limit <input type="number" min="10" max="2000" v-model.number="logsLimit" @change="resetLogs()" /></label>
                 <button class="action" @click="resetLogs()"><i :class="logsLoading ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'"></i> Refresh</button>
+                <button class="action" :disabled="logsLoading || downloadingLogs || !isAdmin" @click="onDownloadLogs()">
+                  <i :class="downloadingLogs ? 'fas fa-spinner fa-spin' : 'fas fa-download'"></i> {{ downloadingLogs ? 'Downloading…' : 'Download' }}
+                </button>
               </div>
             </div>
+            <div class="logs-preview-note">Showing last 100 lines (newest first)</div>
             <div v-if="logsError" class="error-block"><i class="fas fa-exclamation-triangle"></i> {{ logsError }}</div>
             <div class="logs-list" :class="{ loading: logsLoading }">
               <div v-if="!logs.length && !logsLoading" class="empty-state"><i class="fas fa-inbox"></i><p>No logs yet.</p></div>
@@ -212,6 +222,7 @@
             </div>
           </div>
 
+
           <details class="raw-json">
             <summary><i class="fas fa-code"></i> Raw JSON</summary>
             <pre>{{ pretty(detail) }}</pre>
@@ -224,7 +235,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { getTasks, getJob, cancelTask, exportCsv, deleteTask, getJobLogs, AUTH_EVENT, isAuthenticated, getIsAdmin, getAuthUserId, syncAuthMe } from '../api'
+import { getTasks, getJob, cancelTask, exportCsv, deleteTask, getJobLogs, downloadJobLogs, AUTH_EVENT, isAuthenticated, getIsAdmin, getAuthUserId, syncAuthMe } from '../api'
 
 const jobs = ref([])
 const status = ref('')
@@ -239,9 +250,8 @@ let timer = null
   const logs = ref([])
   const logsLoading = ref(false)
   const logsError = ref('')
-  const logsLimit = ref(200)
+  const downloadingLogs = ref(false)
   let logsTimer = null
-  let logsSinceIso = ''
 
 
 function statusIcon(s) {
@@ -317,7 +327,6 @@ async function viewDetail(jobId) {
     // Reset and start fetching logs if admin
     logs.value = []
     logsError.value = ''
-    logsSinceIso = ''
     if (isAdmin.value) {
       await fetchLogs()
       if (logsTimer) clearInterval(logsTimer)
@@ -356,6 +365,19 @@ async function onDelete(jobId) {
   }
 }
 
+async function onDownloadLogs() {
+  try {
+    if (!isAdmin.value || !detail.value || !detail.value.job_id) return
+    logsError.value = ''
+    downloadingLogs.value = true
+    await downloadJobLogs(detail.value.job_id, { order: 'asc' })
+  } catch (e) {
+    logsError.value = String(e)
+  } finally {
+    downloadingLogs.value = false
+  }
+}
+
 const authed = ref(isAuthenticated())
 const isAdmin = ref(getIsAdmin())
 const authUserId = ref(getAuthUserId())
@@ -377,7 +399,6 @@ function closeDetail() {
 
 function resetLogs() {
   logs.value = []
-  logsSinceIso = ''
   fetchLogs().catch(() => {})
 }
 
@@ -404,19 +425,9 @@ async function fetchLogs() {
   try {
     logsLoading.value = true
     logsError.value = ''
-    const params = { limit: logsLimit.value }
-    if (logsSinceIso) params.since = logsSinceIso
+    const params = { limit: 100, order: 'desc' }
     const rows = await getJobLogs(detail.value.job_id, params)
-    if (Array.isArray(rows) && rows.length) {
-      logs.value.push(...rows)
-      // Update since to last ts (use +00:00 instead of Z for Python)
-      const last = rows[rows.length - 1]
-      try {
-        let iso = new Date(last.ts).toISOString()
-        if (iso && iso.endsWith('Z')) iso = iso.replace('Z', '+00:00')
-        if (iso) logsSinceIso = iso
-      } catch (_) {}
-    }
+    logs.value = Array.isArray(rows) ? rows : []
   } catch (e) {
     logsError.value = String(e)
   } finally {

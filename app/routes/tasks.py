@@ -5,6 +5,7 @@ from typing import List, Optional
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
@@ -68,7 +69,7 @@ async def list_tasks(
                 dur_ms = int((finished_at - started_at).total_seconds() * 1000)
         except Exception:
             dur_ms = None
-        return {
+        row = {
             "job_id": jid,
             "status": j.get("status"),
             "progress": j.get("progress") or {"current": 0, "total": 0},
@@ -80,6 +81,16 @@ async def list_tasks(
             "finished_at": finished_at,
             "duration_ms": dur_ms,
         }
+        # Include creator info for admins to aid triage
+        try:
+            if _is_admin(user):
+                row["created_by"] = {
+                    "user_id": j.get("user_id"),
+                    "email": j.get("user_email"),
+                }
+        except Exception:
+            pass
+        return row
 
     return [map_row(j) for j in rows]
 
@@ -193,6 +204,7 @@ async def get_job_logs(
     job_id: str,
     limit: int = Query(default=200, ge=1, le=2000),
     since: Optional[str] = Query(default=None, description="ISO8601 timestamp to filter logs since this time"),
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
     user: dict = Depends(_get_required_user),
 ):
     if not _is_admin(user):
@@ -222,8 +234,75 @@ async def get_job_logs(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid 'since' timestamp format; use ISO8601")
 
-    rows = await list_job_logs(job_id, limit=limit, since=since_dt)
+    rows = await list_job_logs(job_id, limit=limit, since=since_dt, order=order)
     logger.debug("logs endpoint: returning %d rows for job=%s", len(rows or []), job_id)
 
     # Pydantic will coerce dicts into JobLogEntryModel via response_model
     return rows
+
+
+@router.get("/{job_id}/logs/download")
+async def download_job_logs(
+    job_id: str,
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
+    user: dict = Depends(_get_required_user),
+):
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        from app.services.mongo_ops import list_job_logs, get_job  # type: ignore
+        import datetime as dt  # type: ignore
+        import json  # type: ignore
+    except Exception:
+        raise HTTPException(status_code=503, detail="Logs require Mongo dependencies (motor/pymongo).")
+
+    job = await get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def stream_ndjson():
+        # Stream in chunks to avoid memory blowups
+        batch_size = 1000
+        since_dt = None
+        first = True
+        while True:
+            rows = await list_job_logs(job_id, limit=batch_size, since=since_dt, order=order)
+            if not rows:
+                break
+            for row in rows:
+                # Ensure JSON-serializable; let FastAPI handle datetime encoding by converting to iso
+                try:
+                    doc = dict(row)
+                    if doc.get("ts"):
+                        try:
+                            doc["ts"] = doc["ts"].isoformat()
+                        except Exception:
+                            doc["ts"] = str(doc["ts"])  # fallback
+                    yield (json.dumps(doc) + "\n").encode("utf-8")
+                except Exception:
+                    # Best-effort continue
+                    continue
+            # Advance since_dt for ascending only; for desc, paging by since isn't ideal so we stop after first chunk
+            if order == "asc":
+                try:
+                    last = rows[-1]
+                    ts = last.get("ts")
+                    if ts is not None:
+                        if isinstance(ts, str):
+                            try:
+                                since_dt = dt.datetime.fromisoformat(ts)
+                            except Exception:
+                                since_dt = None
+                        else:
+                            since_dt = ts
+                    else:
+                        since_dt = None
+                except Exception:
+                    since_dt = None
+            else:
+                break
+
+    filename = f"job_{job_id}_logs.ndjson"
+    headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
+    return StreamingResponse(stream_ndjson(), media_type="application/x-ndjson", headers=headers)

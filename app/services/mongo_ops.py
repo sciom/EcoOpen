@@ -58,13 +58,14 @@ async def get_document_for_user(doc_id: str, user_id: str) -> Optional[Dict[str,
     return await db["documents"].find_one({"_id": ObjectId(doc_id), "user_id": user_id})
 
 
-async def create_job(total: int, document_ids: List[str], user_id: Optional[str] = None) -> str:
+async def create_job(total: int, document_ids: List[str], user_id: Optional[str] = None, user_email: Optional[str] = None) -> str:
     db = get_db()
     job = {
         "status": "pending",  # pending|running|done|error
         "progress": {"current": 0, "total": total},
         "document_ids": [ObjectId(x) for x in document_ids],
         "user_id": user_id,
+        "user_email": user_email,
         "error": None,
         "created_at": now_utc(),
         "updated_at": now_utc(),
@@ -166,13 +167,17 @@ async def append_job_log(
     await db["job_logs"].insert_one(entry)
 
 
-async def list_job_logs(job_id: str, *, limit: int = 200, since: Optional[dt.datetime] = None) -> List[Dict[str, Any]]:
-    """List recent job logs ordered by timestamp ascending."""
+async def list_job_logs(job_id: str, *, limit: int = 200, since: Optional[dt.datetime] = None, order: str = "asc") -> List[Dict[str, Any]]:
+    """List job logs with ordering.
+
+    order: 'asc' for oldest->newest (default), 'desc' for newest first.
+    """
     db = get_db()
     q: Dict[str, Any] = {"job_id": job_id}
     if since is not None:
         q["ts"] = {"$gte": since}
-    cur = db["job_logs"].find(q).sort("ts", 1).limit(limit)
+    sort_dir = -1 if str(order).lower() == "desc" else 1
+    cur = db["job_logs"].find(q).sort("ts", sort_dir).limit(limit)
     return await cur.to_list(length=limit)
 
 
@@ -193,19 +198,43 @@ async def promote_next_pending_job() -> Optional[Dict[str, Any]]:
     existing = await db["jobs"].find_one({"status": "running"})
     if existing:
         return None
+
     now = now_utc()
+    # Preferred fast path using ReturnDocument
     try:
         from pymongo import ReturnDocument  # type: ignore
+        job = await db["jobs"].find_one_and_update(
+            {"status": "pending"},
+            {"$set": {"status": "running", "started_at": now, "updated_at": now}},
+            sort=[("created_at", 1)],
+            return_document=ReturnDocument.AFTER,
+        )
+        return job
     except Exception:
-        # Fallback: return without promotion if pymongo isn't available for sort/return options
+        # Manual fallback path if pymongo isn't available for sort/return options
+        cur = db["jobs"].find({"status": "pending"}).sort("created_at", 1).limit(1)
+        candidates = await cur.to_list(length=1)
+        if not candidates:
+            return None
+        j = candidates[0]
+        j_id = j.get("_id")
+        res = await db["jobs"].update_one(
+            {"_id": j_id, "status": "pending"},
+            {"$set": {"status": "running", "started_at": now, "updated_at": now}},
+        )
+        if getattr(res, "modified_count", 0) == 1:
+            # Successfully claimed; return the updated job
+            try:
+                updated = await db["jobs"].find_one({"_id": j_id})
+                return updated
+            except Exception:
+                # If find_one by _id is not supported by the stub, return local doc
+                j["status"] = "running"
+                j["started_at"] = now
+                j["updated_at"] = now
+                return j
+        # Lost the race; treat as no promotion
         return None
-    job = await db["jobs"].find_one_and_update(
-        {"status": "pending"},
-        {"$set": {"status": "running", "started_at": now, "updated_at": now}},
-        sort=[("created_at", 1)],
-        return_document=ReturnDocument.AFTER,
-    )
-    return job
 
 
 async def list_pending_jobs(limit: int = 100) -> List[Dict[str, Any]]:

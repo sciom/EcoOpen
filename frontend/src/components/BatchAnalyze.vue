@@ -3,10 +3,10 @@
     <div class="header-section">
       <h2 class="section-title">
         <i class="fas fa-layer-group"></i>
-        Batch Analysis
+        Analysis
       </h2>
       <p class="section-description">
-        Upload multiple PDF files to analyze them in parallel and get comprehensive results.
+        Upload one or more PDF files to analyze them and get comprehensive results.
       </p>
     </div>
 
@@ -46,11 +46,11 @@
           type="submit"
           :disabled="!files.length || loading || !authed"
           class="analyze-button"
-          :title="!authed ? 'Login in Settings to run batch analysis' : (files.length ? `Start analysis for ${files.length} file(s)` : 'Choose files to begin')"
+          :title="!authed ? 'Login in Settings to run analysis' : (files.length ? `Start analysis for ${files.length} file(s)` : 'Choose files to begin')"
         >
           <i v-if="loading" class="fas fa-spinner fa-spin"></i>
           <i v-else class="fas fa-play"></i>
-          {{ loading ? 'Starting Batch...' : (authed ? `Start Batch Analysis (${files.length} files)` : 'Login to Start') }}
+          {{ loading ? 'Starting...' : (authed ? `Start Analysis (${files.length} files)` : 'Login to Start') }}
         </button>
       </form>
     </div>
@@ -62,10 +62,10 @@
 
     <div v-if="job" class="job-status">
       <div class="job-header">
-        <h3 class="job-title">
-          <i class="fas fa-tasks"></i>
-          Batch Job Status
-        </h3>
+          <h3 class="job-title">
+            <i class="fas fa-tasks"></i>
+            Job Status
+          </h3>
         <div class="job-id">
           <i class="fas fa-tag"></i>
           Job ID: {{ job.job_id }}

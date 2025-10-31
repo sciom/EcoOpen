@@ -169,7 +169,7 @@ function friendlyErrorText(status, rawText) {
         return 'Authentication required or token invalid. Please login again on the Login page.'
       }
       if (status === 503 && /Mongo dependencies|Mongo deps|requires Mongo|python-jose/i.test(detail)) {
-        return `${detail}\n\nTip: Use single analyze (sync) where possible or install missing dependencies (motor, pymongo, python-jose).`
+        return `${detail}\n\nTip: Install missing dependencies (motor, pymongo, python-jose) or contact your administrator.`
       }
       return detail
     }
@@ -184,21 +184,6 @@ function friendlyErrorText(status, rawText) {
   return `Request failed with status ${status}`
 }
 
-export async function analyzeSingle(file) {
-  const base = getApiBase()
-  const fd = new FormData()
-  fd.append('file', file)
-  const r = await fetch(`${base}/analyze?mode=sync`, { method: 'POST', body: fd, headers: { ...authHeaders() } })
-  if (r.status === 401) {
-    logout()
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
-  }
-  if (!r.ok) {
-    const t = await r.text().catch(() => '')
-    throw new Error(friendlyErrorText(r.status, t))
-  }
-  return r.json()
-}
 
 export async function analyzeBatch(files) {
   const base = getApiBase()
@@ -254,6 +239,7 @@ export async function getJobLogs(jobId, params = {}) {
   const qp = new URLSearchParams()
   if (params.limit) qp.set('limit', String(params.limit))
   if (params.since) qp.set('since', String(params.since))
+  if (params.order) qp.set('order', String(params.order))
   const url = qp.toString() ? `${base}/tasks/${jobId}/logs?${qp.toString()}` : `${base}/tasks/${jobId}/logs`
   const r = await fetch(url, { headers: { ...authHeaders() } })
   if (r.status === 401) {
@@ -265,6 +251,50 @@ export async function getJobLogs(jobId, params = {}) {
     throw new Error(friendlyErrorText(r.status, t))
   }
   return r.json()
+}
+
+export async function downloadJobLogs(jobId, params = {}) {
+  const base = getApiBase()
+  const qp = new URLSearchParams()
+  if (params.order) qp.set('order', String(params.order))
+  const url = qp.toString() ? `${base}/tasks/${jobId}/logs/download?${qp.toString()}` : `${base}/tasks/${jobId}/logs/download`
+  const r = await fetch(url, { headers: { ...authHeaders() } })
+  if (r.status === 401) {
+    logout()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
+  }
+  if (!r.ok) {
+    const t = await r.text().catch(() => '')
+    throw new Error(friendlyErrorText(r.status, t))
+  }
+
+  // Determine filename from Content-Disposition if provided
+  const disp = r.headers?.get && r.headers.get('Content-Disposition')
+  let filename = `job_${jobId}_logs.ndjson`
+  if (disp && /filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i.test(disp)) {
+    const m = disp.match(/filename\*=utf-8''([^;]+)|filename="?([^";]+)"?/i)
+    const raw = decodeURIComponent(m[1] || m[2] || '')
+    if (raw) filename = raw
+  }
+
+  const blob = await r.blob()
+  if (!blob || blob.size === 0) {
+    throw new Error('Download failed: empty response body')
+  }
+
+  const urlObj = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = urlObj
+    a.download = filename
+    a.rel = 'noopener'
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    URL.revokeObjectURL(urlObj)
+  }
 }
 
 export async function cancelTask(jobId) {

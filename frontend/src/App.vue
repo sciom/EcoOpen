@@ -51,7 +51,6 @@
         <transition name="fade" mode="out-in">
           <section :key="tab" class="tab-content">
             <HealthStatus v-if="tab === 'health'" />
-            <SingleAnalyze v-else-if="tab === 'single'" />
             <BatchAnalyze v-else-if="tab === 'batch'" @switch-tab="onTabClick($event)" />
             <JobsView v-else-if="tab === 'jobs'" />
             <LoginView v-else-if="tab === 'login'" @switch-tab="onTabClick($event)" />
@@ -70,7 +69,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watchEffect, computed } from 'vue'
 import HealthStatus from './components/HealthStatus.vue'
-import SingleAnalyze from './components/SingleAnalyze.vue'
 import BatchAnalyze from './components/BatchAnalyze.vue'
 import JobsView from './components/JobsView.vue'
 import SettingsView from './components/SettingsView.vue'
@@ -78,15 +76,15 @@ import LoginView from './components/LoginView.vue'
 import { getApiBase, API_BASE_EVENT, isAuthenticated, getAuthEmail, AUTH_EVENT, logout } from './api'
 
 const initialSavedTab = localStorage.getItem('uiTab')
-const tab = ref(isAuthenticated() ? (initialSavedTab || 'single') : 'login')
+const normalizedInitialTab = (initialSavedTab === 'single') ? 'batch' : initialSavedTab
+const tab = ref(isAuthenticated() ? (normalizedInitialTab || 'batch') : 'login')
 const apiBase = ref(getApiBase())
 const authed = ref(isAuthenticated())
 const authEmail = ref(getAuthEmail())
 const showAuthMenu = ref(false)
 
 const tabs = [
-  { id: 'single', label: 'Single Analysis', icon: 'fas fa-file-pdf' },
-  { id: 'batch', label: 'Batch Analysis', icon: 'fas fa-layer-group' },
+  { id: 'batch', label: 'Analysis', icon: 'fas fa-layer-group' },
   { id: 'jobs', label: 'Jobs', icon: 'fas fa-list-check' },
   { id: 'health', label: 'System Health', icon: 'fas fa-heartbeat' },
   { id: 'settings', label: 'Settings', icon: 'fas fa-cog' },
@@ -103,7 +101,9 @@ function onTabClick(id) {
     tab.value = 'login'
     return
   }
-  tab.value = id
+  const allowed = tabs.map(t => t.id)
+  const next = allowed.includes(id) ? id : (authed.value ? 'batch' : 'login')
+  tab.value = next
 }
 
 const onBaseChange = () => { apiBase.value = getApiBase() }
@@ -114,7 +114,7 @@ const onAuthChange = () => {
   authEmail.value = getAuthEmail()
   if (authed.value) {
     if (!wasAuthed) {
-      tab.value = 'single'
+      tab.value = 'batch'
     }
   } else {
     showAuthMenu.value = false

@@ -277,9 +277,11 @@ export async function downloadJobLogs(jobId, params = {}) {
     if (raw) filename = raw
   }
 
-  const blob = await r.blob()
+  let blob = await r.blob()
   if (!blob || blob.size === 0) {
-    throw new Error('Download failed: empty response body')
+    // Fallback: create a placeholder NDJSON so users still get a file
+    const placeholder = `{"job_id":"${jobId}","info":"no logs available"}\n`
+    blob = new Blob([placeholder], { type: 'application/x-ndjson' })
   }
 
   const urlObj = URL.createObjectURL(blob)

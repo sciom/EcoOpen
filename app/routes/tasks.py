@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
@@ -261,11 +261,20 @@ async def download_job_logs(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # Preflight: if no logs at all, return a small NDJSON body directly
+    preview = await list_job_logs(job_id, limit=1, since=None, order=order)
+    if not preview:
+        filename = f"job_{job_id}_logs.ndjson"
+        headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}
+        body = json.dumps({"job_id": job_id, "info": "no logs available"}) + "\n"
+        return Response(content=body, media_type="application/x-ndjson", headers=headers)
+
     async def stream_ndjson():
         # Stream in chunks to avoid memory blowups
         batch_size = 1000
         since_dt: Optional[dt.datetime] = None
         since_id: Optional[Any] = None
+        yielded_any = False
         while True:
             rows = await list_job_logs(job_id, limit=batch_size, since=since_dt, order=order, since_id=since_id)
             if not rows:
@@ -279,6 +288,7 @@ async def download_job_logs(
                             doc["ts"] = doc["ts"].isoformat()
                         except Exception:
                             doc["ts"] = str(doc["ts"])  # fallback
+                    yielded_any = True
                     yield (json.dumps(doc) + "\n").encode("utf-8")
                 except Exception:
                     # Best-effort continue
@@ -304,6 +314,13 @@ async def download_job_logs(
                     since_id = None
             else:
                 break
+        if not yielded_any:
+            try:
+                placeholder = {"job_id": job_id, "info": "no logs available"}
+                yield (json.dumps(placeholder) + "\n").encode("utf-8")
+            except Exception:
+                # Last resort to avoid empty body
+                yield b'{"info":"no logs available"}\n'
 
     filename = f"job_{job_id}_logs.ndjson"
     headers = {"Content-Disposition": f"attachment; filename=\"{filename}\""}

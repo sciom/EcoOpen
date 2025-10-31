@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import logging
 
@@ -264,10 +264,10 @@ async def download_job_logs(
     async def stream_ndjson():
         # Stream in chunks to avoid memory blowups
         batch_size = 1000
-        since_dt = None
-        first = True
+        since_dt: Optional[dt.datetime] = None
+        since_id: Optional[Any] = None
         while True:
-            rows = await list_job_logs(job_id, limit=batch_size, since=since_dt, order=order)
+            rows = await list_job_logs(job_id, limit=batch_size, since=since_dt, order=order, since_id=since_id)
             if not rows:
                 break
             for row in rows:
@@ -287,6 +287,7 @@ async def download_job_logs(
             if order == "asc":
                 try:
                     last = rows[-1]
+                    since_id = last.get("_id")
                     ts = last.get("ts")
                     if ts is not None:
                         if isinstance(ts, str):
@@ -300,6 +301,7 @@ async def download_job_logs(
                         since_dt = None
                 except Exception:
                     since_dt = None
+                    since_id = None
             else:
                 break
 

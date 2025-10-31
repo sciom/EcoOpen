@@ -167,16 +167,49 @@ async def append_job_log(
     await db["job_logs"].insert_one(entry)
 
 
-async def list_job_logs(job_id: str, *, limit: int = 200, since: Optional[dt.datetime] = None, order: str = "asc") -> List[Dict[str, Any]]:
+async def list_job_logs(
+    job_id: str,
+    *,
+    limit: int = 200,
+    since: Optional[dt.datetime] = None,
+    order: str = "asc",
+    since_id: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
     """List job logs with ordering.
 
     order: 'asc' for oldest->newest (default), 'desc' for newest first.
     """
     db = get_db()
     q: Dict[str, Any] = {"job_id": job_id}
-    if since is not None:
-        q["ts"] = {"$gte": since}
     sort_dir = -1 if str(order).lower() == "desc" else 1
+    since_oid: Optional[ObjectId] = None
+    if since_id is not None:
+        if isinstance(since_id, ObjectId):
+            since_oid = since_id
+        else:
+            try:
+                since_oid = ObjectId(str(since_id))
+            except Exception:
+                since_oid = None
+
+    if since is not None and since_oid is not None:
+        if sort_dir == 1:
+            q["$or"] = [
+                {"ts": {"$gt": since}},
+                {"ts": since, "_id": {"$gt": since_oid}},
+            ]
+        else:
+            q["$or"] = [
+                {"ts": {"$lt": since}},
+                {"ts": since, "_id": {"$lt": since_oid}},
+            ]
+    elif since is not None:
+        op = "$gte" if sort_dir == 1 else "$lte"
+        q["ts"] = {op: since}
+    elif since_oid is not None:
+        op = "$gt" if sort_dir == 1 else "$lt"
+        q["_id"] = {op: since_oid}
+
     cur = db["job_logs"].find(q).sort("ts", sort_dir).limit(limit)
     return await cur.to_list(length=limit)
 

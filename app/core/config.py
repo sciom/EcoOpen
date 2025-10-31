@@ -68,6 +68,56 @@ class Settings(BaseSettings):
     # Repair toggles
     REPAIR_CONTEXT_ENABLED: bool = Field(default=True)
     REPAIR_URLS_ENABLED: bool = Field(default=True)
+    DATA_LINK_ALLOWED_DOMAINS: List[str] = Field(
+        default_factory=lambda: [
+            "zenodo.org",
+            "figshare.com",
+            "datadryad.org",
+            "dryad.org",
+            "osf.io",
+            "pangaea.de",
+            "data.mendeley.com",
+            "openneuro.org",
+            "dataverse.org",
+            "purl.org",
+            "ebi.ac.uk",
+            "ncbi.nlm.nih.gov",
+            "ega-archive.org",
+        ]
+    )
+    CODE_LINK_ALLOWED_DOMAINS: List[str] = Field(
+        default_factory=lambda: [
+            "github.com",
+            "gitlab.com",
+            "gitlab.org",
+            "bitbucket.org",
+            "codeocean.com",
+            "sourceforge.net",
+            "codeberg.org",
+            "huggingface.co",
+        ]
+    )
+    LINK_DENY_SUBSTRINGS: List[str] = Field(
+        default_factory=lambda: [
+            "orcid.org",
+            "urldefense.com",
+            "terms-and-conditions",
+            "onlinelibrary.wiley.com/terms",
+            "publons.com",
+            "doubleclick.net",
+        ]
+    )
+    DATA_LINK_DATASET_DOI_PREFIXES: List[str] = Field(
+        default_factory=lambda: [
+            "10.5281",
+            "10.6084",
+            "10.5061",
+            "10.17605",
+            "10.1594",
+            "10.7910",
+            "10.18112",
+        ]
+    )
 
     # --- Validators / Normalizers ---
     @field_validator("AGENT_BASE_URL", mode="before")
@@ -173,6 +223,36 @@ class Settings(BaseSettings):
         if not v:
             return "ws://localhost:5174"
         return str(v).strip()
+
+    @field_validator(
+        "DATA_LINK_ALLOWED_DOMAINS",
+        "CODE_LINK_ALLOWED_DOMAINS",
+        "LINK_DENY_SUBSTRINGS",
+        "DATA_LINK_DATASET_DOI_PREFIXES",
+        mode="before",
+    )
+    @classmethod
+    def _parse_list_field(cls, v: Any) -> List[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(item).strip().lower() for item in v if str(item).strip()]
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    arr = json.loads(s)
+                    if isinstance(arr, list):
+                        return [str(item).strip().lower() for item in arr if str(item).strip()]
+                except Exception:
+                    pass
+            return [part.strip().lower() for part in s.split(",") if part.strip()]
+        try:
+            return [str(item).strip().lower() for item in list(v) if str(item).strip()]
+        except Exception:
+            return [str(v).strip().lower()]
 
 # Initialize settings once for application use
 settings = Settings()

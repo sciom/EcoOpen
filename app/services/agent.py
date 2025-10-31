@@ -1,28 +1,32 @@
-import re
 import logging
-from typing import List, Optional, Tuple
+import re
+from typing import Dict, List, Optional
 from uuid import uuid4
-from urllib.parse import urlparse, urlunparse
 
-from app.core.config import settings
-from app.models.schemas import PDFAnalysisResultModel
-
+import chromadb
+import httpx
+try:
+    import pdfplumber  # type: ignore
+except ImportError:  # pragma: no cover - pdfplumber provided via requirements
+    pdfplumber = None
+from chromadb.config import Settings as ChromaSettings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.embeddings import Embeddings
-import chromadb
-from chromadb.config import Settings as ChromaSettings
-import httpx
+
+from app.core.config import settings
 from app.core.errors import (
-    InvalidPDFError,
     EmbeddingModelMissingError,
+    InvalidPDFError,
     LLMServiceError,
 )
-from app.services.llm_client import get_llm_client, ChatMessage
-from app.core.validation import validate_doi, validate_url
+from app.core.validation import validate_doi
+from app.models.schemas import PDFAnalysisResultModel
 from app.services import log_timing
+from app.services.availability import AvailabilityEngine
+from app.services.llm_client import ChatMessage, get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +119,12 @@ class AgentRunner:
         self._agent_base_url = settings.AGENT_BASE_URL.rstrip("/")
         self._agent_model = settings.AGENT_MODEL
         self._agent_api_key = settings.AGENT_API_KEY
+        self._availability_engine = AvailabilityEngine(
+            data_allowed_domains=settings.DATA_LINK_ALLOWED_DOMAINS,
+            code_allowed_domains=settings.CODE_LINK_ALLOWED_DOMAINS,
+            deny_substrings=settings.LINK_DENY_SUBSTRINGS,
+            dataset_doi_prefixes=settings.DATA_LINK_DATASET_DOI_PREFIXES,
+        )
 
     def _chat(self, system_prompt: str, user_prompt: str) -> str:
         """Send a chat completion via configured LLM client (HTTP or MCP)."""
@@ -126,13 +136,25 @@ class AgentRunner:
         with log_timing(logger, "llm_chat", model=self._agent_model, **self._ctx):
             return client.chat_complete(messages, model=self._agent_model, temperature=0.0)
 
-    def _load_pdf(self, pdf_path: str) -> str:
+    def _load_pdf_pages(self, pdf_path: str) -> List[str]:
         try:
-            loader = PyPDFLoader(pdf_path)
-            pages = loader.load()
+            pages: List[str] = []
+            if pdfplumber is not None:
+                try:
+                    with pdfplumber.open(pdf_path) as pdf:
+                        for page in pdf.pages:
+                            text = page.extract_text(layout=True) or ""
+                            if text:
+                                pages.append(text)
+                except Exception:
+                    pages = []
+            if not pages:
+                loader = PyPDFLoader(pdf_path)
+                docs = loader.load()
+                pages = [doc.page_content for doc in docs if doc.page_content]
             if not pages:
                 raise InvalidPDFError("PDF appears to be empty or unreadable")
-            return "\n".join([p.page_content for p in pages])
+            return pages
         except InvalidPDFError:
             raise
         except Exception as e:
@@ -205,149 +227,13 @@ class AgentRunner:
             return validate_doi(m.group(1))
         return validate_doi(s)
 
-    def _extract_by_headings(self, text: str, headings: List[str]) -> Optional[str]:
-        pattern = r"(?ims)^(?:" + "|".join(headings) + r")\s*\n+(?P<body>.+?)(?=\n\s*^[A-Z][^\n]{0,80}$|\n\n\n|\Z)"
-        m = re.search(pattern, text)
-        if not m:
-            return None
-        body = m.group("body").strip()
-        parts = [p.strip() for p in body.split("\n\n") if p.strip()]
-        return "\n\n".join(parts[:2]) if parts else None
-
-    def _extract_by_phrases(self, text: str, phrases: List[str]) -> Optional[str]:
-        pattern = r"(?is)(?:" + "|".join(phrases) + r").+?(?:\.\n|\n\n|\.)"
-        m = re.search(pattern, text)
-        return m.group(0).strip() if m else None
-
-    def _extract_links_from_text(self, text: str) -> List[str]:
-        links: List[str] = []
-        if not text:
-            return links
-        # Reconstruct fragmented URLs across whitespace and hyphenation
-        text = re.sub(r"(https?)\s*:\s*//\s*", r"\1://", text, flags=re.IGNORECASE)
-        text = re.sub(r"(?i)([a-z]{2,}://[\w\-\.]+)\s*-\n\s*([\w/])", r"\1\2", text)
-        url_pattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
-        for url in re.findall(url_pattern, text):
-            if len(url) > 10 and "." in url:
-                links.append(url)
-        # Also catch 'www.example.com/...' without scheme and add https
-        for m in re.findall(r"(?<![a-z])www\.[\w\-\.]+(?:/[\w\-\./%#?=&]+)?", text, flags=re.IGNORECASE):
-            links.append("https://" + m)
-        seen = set()
-        clean: List[str] = []
-        for l in links:
-            low = l.lower().rstrip(".,;)]")
-            if low in seen or any(b in low for b in ["none", "example"]):
-                continue
-            seen.add(low)
-            clean.append(l.rstrip(".,;)]"))
-        return clean
-
-    def _expand_statement_context(self, normalized_text: str, statement: Optional[str], max_chars: int = 600) -> Optional[str]:
-        if not statement:
-            return None
-        s = statement.strip()
-        if not s:
-            return None
-        # Try to locate the statement (or its prefix) in the normalized text
-        probe = s[:120]
-        idx = normalized_text.find(probe)
-        if idx < 0 and len(s) > 60:
-            probe = s[:60]
-            idx = normalized_text.find(probe)
-        if idx < 0:
-            return s
-        # Expand to surrounding paragraph boundaries
-        a = normalized_text.rfind("\n\n", 0, idx)
-        a = 0 if a < 0 else a + 2
-        b = normalized_text.find("\n\n", idx + len(probe))
-        b = len(normalized_text) if b < 0 else b
-        span = normalized_text[a:b].strip()
-        # Ensure ends with sentence punctuation; if not, try to extend to next period
-        if not re.search(r"[\.!?]\)?$", span) and b < len(normalized_text):
-            extra = normalized_text[b: b + 400]
-            m = re.search(r".+?[\.!?]\)?", extra)
-            if m:
-                span = (span + " " + m.group(0)).strip()
-        if len(span) > max_chars:
-            span = span[:max_chars].rstrip()
-        return span or s
-
-    def _repair_urls(self, urls: List[str]) -> List[str]:
-        repaired: List[str] = []
-        seen = set()
-        for u in urls:
-            if not u:
-                continue
-            s = u.strip()
-            s = re.sub(r"\s+", "", s)
-            s = re.sub(r"[\]\)\.,;]+$", "", s)
-            if not s.lower().startswith(("http://", "https://")):
-                if s.lower().startswith("www."):
-                    s = "https://" + s
-                else:
-                    # skip non-http
-                    continue
-            try:
-                parsed = urlparse(s)
-                netloc = parsed.netloc.lower()
-                if netloc.startswith("www."):
-                    netloc = netloc[4:]
-                # collapse consecutive slashes in path
-                path = re.sub(r"/{2,}", "/", parsed.path)
-                rebuilt = urlunparse((parsed.scheme, netloc, path, "", parsed.query, parsed.fragment))
-                low = rebuilt.lower()
-                if low not in seen and validate_url(rebuilt):
-                    seen.add(low)
-                    repaired.append(rebuilt)
-            except Exception:
-                continue
-        return repaired
-
     def analyze(self, pdf_path: str) -> PDFAnalysisResultModel:
         # Load and clean text
         with log_timing(logger, "load_pdf", **self._ctx):
-            raw_text = self._load_pdf(pdf_path)
+            pages = self._load_pdf_pages(pdf_path)
         with log_timing(logger, "normalize_text", **self._ctx):
-            normalized = self._normalize_text(raw_text)
-
-        # Heuristic extraction
-        data_heading_variants = [
-            r"data availability(?: statement)?",
-            r"availability of data(?: and materials)?",
-            r"data and materials availability",
-            r"data accessibility",
-            r"availability of supporting data",
-            r"supporting information",
-        ]
-        code_heading_variants = [
-            r"code availability",
-            r"software availability",
-            r"source code availability",
-            r"code and data availability",
-        ]
-        data_phrase_variants = [
-            r"data\s+(?:are|is)\s+available",
-            r"data\s+have\s+been\s+deposited",
-            r"data\s+can\s+be\s+accessed",
-            r"data\s+available\s+(?:at|from)",
-            r"dataset\s+available",
-            r"supplementary\s+data\s+are\s+available",
-            r"upon\s+request",
-            r"available\s+upon\s+reasonable\s+request",
-            r"data\s+deposited\s+in",
-        ]
-        code_phrase_variants = [
-            r"code\s+(?:is|are)\s+available",
-            r"source\s+code\s+is\s+available",
-            r"repository\s+at",
-            r"scripts\s+available",
-            r"software\s+available",
-            r"github|gitlab|bitbucket",
-        ]
-
-        data_stmt_heur = self._extract_by_headings(normalized, data_heading_variants) or self._extract_by_phrases(normalized, data_phrase_variants)
-        code_stmt_heur = self._extract_by_headings(normalized, code_heading_variants) or self._extract_by_phrases(normalized, code_phrase_variants)
+            normalized_pages = [self._normalize_text(page) for page in pages]
+            normalized = "\n\n".join(normalized_pages)
 
         # Chunk and build vector store
         with log_timing(logger, "chunk_text", **self._ctx):
@@ -378,20 +264,6 @@ class AgentRunner:
             "Extract ONLY the main title, not subtitles, author names, or journal names. "
             "If no clear title is found, respond with exactly: 'None'"
         )
-        sys_data = (
-            "You are an expert at finding data availability statements in scientific papers. "
-            "Look for explicit statements about data availability, data access, data sharing, or where data can be found. "
-            "Common phrases include 'data are available', 'data deposited', 'supplementary data', 'data accessible at', etc. "
-            "Return an EXACT QUOTED SPAN from the provided Text, preserving wording and punctuation. Do NOT paraphrase. "
-            "If no data availability statement is found, respond with exactly: 'None'"
-        )
-        sys_code = (
-            "You are an expert at finding code availability statements in scientific papers. "
-            "Look for explicit statements about code availability, software access, repository links, or programming resources. "
-            "Common phrases include 'code available', 'source code', 'GitHub', 'repository', 'software available', etc. "
-            "Return an EXACT QUOTED SPAN from the provided Text, preserving wording and punctuation. Do NOT paraphrase. "
-            "If no code availability statement is found, respond with exactly: 'None'"
-        )
         sys_data_license = (
             "Extract ONLY explicit data sharing license text if present.\n"
             "Return 'None' if absent."
@@ -400,10 +272,20 @@ class AgentRunner:
             "Extract ONLY explicit code/software license text if present.\n"
             "Return 'None' if absent."
         )
-        sys_links = (
-            "Extract ONLY explicit links (full URLs).\n"
-            "Return comma-separated links or 'None'."
+
+        availability = self._availability_engine.extract(
+            normalized_pages,
+            chat_fn=lambda system, user: self._chat(system, user),
+            diagnostics=logger.isEnabledFor(logging.DEBUG),
         )
+        if availability.diagnostics:
+            logger.debug("availability_diagnostics %s", availability.diagnostics)
+
+        data_stmt = availability.data_statement
+        code_stmt = availability.code_statement
+        data_links = availability.data_links
+        code_links = availability.code_links
+        confidence_scores: Dict[str, float] = dict(availability.confidence_scores)
 
         # DOI: deterministic front-matter first, then LLM fallback
         doi = None
@@ -453,47 +335,6 @@ class AgentRunner:
         if title and (len(title) < 10 or len(title) > 300):
             title = None
 
-        # Data availability - Deterministic first, then agent fallback
-        data_stmt = data_stmt_heur
-        if not data_stmt:
-            data_ctx = self._similarity_context_multi(
-                vs,
-                [
-                    "data availability access supplementary materials dataset repository accessibility archived deposited Dryad Zenodo Figshare OSF",
-                    "availability of data and materials availability of supporting data",
-                    "data deposited archived repository data accessible at upon request",
-                ],
-                k_each=6,
-                max_chars=12000,
-            )
-            if data_ctx:
-                data_stmt = self._chat(sys_data, f"Text:\n{data_ctx}\n\nReturn ONLY the data availability statement or 'None'.")
-        if data_stmt and len(data_stmt) < 10:
-            data_stmt = None
-        # Context repair: expand to full paragraph/sentence if enabled
-        if settings.REPAIR_CONTEXT_ENABLED and data_stmt:
-            data_stmt = self._expand_statement_context(normalized, data_stmt)
-
-        # Code availability - Deterministic first, then agent fallback
-        code_stmt = code_stmt_heur
-        if not code_stmt:
-            code_ctx = self._similarity_context_multi(
-                vs,
-                [
-                    "code availability software scripts GitHub GitLab Bitbucket repository programming analysis source reproducibility",
-                    "source code available software availability repository link",
-                ],
-                k_each=6,
-                max_chars=10000,
-            )
-            if code_ctx:
-                code_stmt = self._chat(sys_code, f"Text:\n{code_ctx}\n\nReturn ONLY the code availability statement or 'None'.")
-        if code_stmt and len(code_stmt) < 10:
-            code_stmt = None
-        # Context repair for code statement
-        if settings.REPAIR_CONTEXT_ENABLED and code_stmt:
-            code_stmt = self._expand_statement_context(normalized, code_stmt)
-
         # Licenses
         data_license = self._extract_single(
             vs,
@@ -515,154 +356,6 @@ class AgentRunner:
         if code_license and len(code_license) < 5:
             code_license = None
 
-        # Links (primary data sources only for data_links)
-        def _extract_links(query: str) -> List[str]:
-            ctx = self._similarity_context(vs, query=query, k=6)
-            out = self._chat(sys_links, f"Text:\n{ctx}\n\nLinks:")
-            links: List[str] = []
-            if out and out.strip().lower() not in {"none", "not found", "n/a", "na", ""}:
-                url_pattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
-                for url in re.findall(url_pattern, out):
-                    if len(url) > 10 and "." in url:
-                        links.append(url)
-                if "," in out:
-                    for tok in [t.strip() for t in out.split(",")]:
-                        if tok.startswith(("http", "www", "github.com", "doi.org")) and len(tok) > 10:
-                            links.append(tok)
-            seen = set()
-            clean: List[str] = []
-            for l in links:
-                low = l.lower()
-                if low in seen:
-                    continue
-                if any(bad in low for bad in ["none", "not found", "example"]):
-                    continue
-                seen.add(low)
-                clean.append(l)
-            return clean
-
-        DATA_REPO_WHITELIST = {
-            "zenodo.org",
-            "figshare.com",
-            "datadryad.org",
-            "dryad.org",
-            "osf.io",
-            "pangaea.de",
-            "data.mendeley.com",
-            "openneuro.org",
-            "dataverse.org",
-            "purl.org",  # sometimes dataset DOIs use purl -> redirects
-            "ebi.ac.uk",
-            "ncbi.nlm.nih.gov",
-            "ega-archive.org",
-        }
-        DATASET_DOI_PREFIXES = {
-            "10.5281",  # Zenodo
-            "10.6084",  # Figshare
-            "10.5061",  # Dryad
-            "10.17605",  # OSF
-            "10.1594",  # PANGAEA
-            "10.7910",  # Dataverse (Harvard DVN)
-            "10.18112",  # OpenNeuro
-        }
-
-        def _clean_url(u: str) -> str:
-            return re.sub(r"[\.,;\)\]]+$", "", u).strip()
-
-        def _domain(u: str) -> str:
-            try:
-                net = urlparse(u).netloc.lower()
-                if net.startswith("www."):
-                    net = net[4:]
-                return net
-            except Exception:
-                return ""
-
-        def _is_dataset_doi(u: str) -> bool:
-            if not u.lower().startswith("http"):
-                return False
-            if "doi.org/10." in u.lower():
-                try:
-                    doi_part = u.split("doi.org/", 1)[1]
-                    doi_part = doi_part.strip()
-                    for pref in DATASET_DOI_PREFIXES:
-                        if doi_part.startswith(pref):
-                            return True
-                except Exception:
-                    return False
-            return False
-
-        def _is_primary_dataset_link(u: str) -> bool:
-            d = _domain(u)
-            return d in DATA_REPO_WHITELIST or _is_dataset_doi(u)
-
-        def _filter_valid_primary(links: List[str]) -> List[str]:
-            out: List[str] = []
-            seen = set()
-            for l in links:
-                cu = _clean_url(l)
-                if not validate_url(cu):
-                    continue
-                if not _is_primary_dataset_link(cu):
-                    continue
-                low = cu.lower()
-                if low in seen:
-                    continue
-                seen.add(low)
-                out.append(cu)
-            return out
-
-        def _extract_links_around(text: str, center_idx: int, window: int = 600) -> List[str]:
-            if center_idx < 0:
-                return []
-            a = max(0, center_idx - window)
-            b = min(len(text), center_idx + window)
-            return self._extract_links_from_text(text[a:b])
-
-        data_links: List[str] = []
-        code_links: List[str] = []
-
-        # Data links from statement (and nearby context), then LLM, filtered to primary sources
-        stmt_text = data_stmt or data_stmt_heur
-        cand_data_links: List[str] = []
-        if stmt_text:
-            cand_data_links.extend(self._extract_links_from_text(stmt_text))
-            # Try to find the statement in the full text and collect nearby links
-            probe = stmt_text[:80] if len(stmt_text) >= 80 else stmt_text
-            idx = normalized.find(probe) if probe else -1
-            cand_data_links.extend(_extract_links_around(normalized, idx, 600))
-        # Add LLM-extracted links but still filter strictly
-        cand_data_links.extend(_extract_links("data repository dataset download link URL supplementary materials"))
-        # Optional repair of candidate URLs
-        if settings.REPAIR_URLS_ENABLED:
-            cand_data_links = self._repair_urls(cand_data_links)
-        data_links = _filter_valid_primary(cand_data_links)
-
-        # Code links: keep as before but validate/repair
-        if code_stmt_heur:
-            code_links.extend(self._extract_links_from_text(code_stmt_heur))
-        code_links.extend(_extract_links("GitHub repository code software scripts programming source"))
-        if settings.REPAIR_URLS_ENABLED:
-            code_links = self._repair_urls(code_links)
-        else:
-            code_links = [
-                _clean_url(u) for u in code_links if validate_url(_clean_url(u))
-            ]
-
-        def _dedup(xs: List[str]) -> List[str]:
-            seen = set()
-            out: List[str] = []
-            for x in xs:
-                lx = x.lower()
-                if lx in seen:
-                    continue
-                seen.add(lx)
-                out.append(x)
-            return out
-
-        data_links = _dedup(data_links)
-        code_links = _dedup(code_links)
-
         return PDFAnalysisResultModel(
             title=title,
             doi=doi,
@@ -672,5 +365,5 @@ class AgentRunner:
             code_license=code_license,
             data_links=data_links,
             code_links=code_links,
-            confidence_scores={},
+            confidence_scores=confidence_scores,
         )

@@ -3,6 +3,7 @@ langchain-community==0.0.10
 chromadb==0.4.22
 ollama==0.1.7
 pypdf==4.0.1
+pdfplumber>=0.10.3
 pydantic==2.5.0
 requests==2.31.0
 

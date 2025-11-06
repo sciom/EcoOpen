@@ -7,6 +7,7 @@ from app.core.validation import (
     validate_url,
     sanitize_filename,
     validate_file_extension,
+    is_pdf_bytes,
 )
 
 
@@ -82,3 +83,12 @@ def test_validate_file_extension():
     assert validate_file_extension("document.doc", allowed) is False
     assert validate_file_extension("document", allowed) is False
     assert validate_file_extension("", allowed) is False
+
+
+def test_is_pdf_bytes():
+    assert is_pdf_bytes(b"%PDF-1.4\n...") is True
+    assert is_pdf_bytes(b"%PDF-") is True
+    assert is_pdf_bytes(b"%PDX-") is False
+    assert is_pdf_bytes(b"") is False
+    # Ensure header check works on bytes only (bytearray cast)
+    assert is_pdf_bytes(bytes(bytearray(b"%PDF-1.7"))) is True

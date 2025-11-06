@@ -1,3 +1,5 @@
+import sys
+import types
 import pytest
 from typing import Any
 
@@ -5,6 +7,20 @@ from typing import Any
 def _patch_no_mongo(monkeypatch):
     # Disable Mongo-backed lifespan to avoid real connection attempts
     monkeypatch.setattr("app.main._MONGO_ENABLED", False, raising=False)
+
+
+def _install_fake_mongo_ops(monkeypatch, *, get_job_returns=None, list_job_logs_returns=None):
+    mod = types.ModuleType("app.services.mongo_ops")
+
+    async def get_job(job_id: str):  # type: ignore
+        return get_job_returns
+
+    async def list_job_logs(job_id: str, **kwargs):  # type: ignore
+        return list_job_logs_returns or []
+
+    mod.get_job = get_job  # type: ignore
+    mod.list_job_logs = list_job_logs  # type: ignore
+    sys.modules["app.services.mongo_ops"] = mod
 
 
 def _make_token(email: str, sub: str = "u1") -> str:
@@ -35,11 +51,8 @@ async def test_logs_unknown_job_404(client, monkeypatch):
     admin_email = "admin@example.com"
     settings.ADMIN_EMAILS = [admin_email]
 
-    # Patch mongo_ops.get_job to return None
-    async def _fake_get_job(job_id: str) -> Any:
-        return None
-
-    monkeypatch.setattr("app.services.mongo_ops.get_job", _fake_get_job, raising=False)
+    # Ensure mongo_ops import succeeds and get_job returns None
+    _install_fake_mongo_ops(monkeypatch, get_job_returns=None, list_job_logs_returns=[])
 
     token = _make_token(admin_email)
     r = client.get("/tasks/does-not-exist/logs", headers={"Authorization": f"Bearer {token}"})

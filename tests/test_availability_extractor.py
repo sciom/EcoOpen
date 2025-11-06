@@ -87,3 +87,17 @@ def test_extract_statements_without_headings():
     assert "https://gitlab.com/example/project" in result.code_links
     # Fallback confidence should be modest
     assert 0.0 <= result.data_confidence <= 0.7
+
+
+def test_heading_only_does_not_return_statement():
+    pages = [
+        "Data availability:",
+        "Acknowledgements The authors thank everyone.",
+    ]
+    engine = _engine()
+
+    def empty_chat(system: str, prompt: str) -> str:
+        return ""
+
+    result = engine.extract(pages, chat_fn=empty_chat, diagnostics=False)
+    assert result.data_statement is None

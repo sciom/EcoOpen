@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import chromadb
 import httpx
+
 try:
     import pdfplumber  # type: ignore
 except ImportError:  # pragma: no cover - pdfplumber provided via requirements
@@ -109,7 +110,9 @@ class AgentRunner:
         try:
             self._chroma_client = chromadb.EphemeralClient(settings=ChromaSettings(anonymized_telemetry=False))
         except Exception:
-            self._chroma_client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH, settings=ChromaSettings(anonymized_telemetry=False))
+            self._chroma_client = chromadb.PersistentClient(
+                path=settings.CHROMA_DB_PATH, settings=ChromaSettings(anonymized_telemetry=False)
+            )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1800,
             chunk_overlap=250,
@@ -167,9 +170,86 @@ class AgentRunner:
         t = re.sub(r"(https?)\s*:\s*//\s*", r"\1://", t, flags=re.IGNORECASE)
         # normalize newlines and spaces
         t = t.replace("\r\n", "\n").replace("\r", "\n")
-        t = re.sub(r"\n{3,}", "\n\n", t)
         t = re.sub(r"[ \t]{2,}", " ", t)
-        return t
+
+        # Join lines that don't end with sentence-ending punctuation
+        # This handles text that wraps across lines mid-sentence
+        lines = t.split("\n")
+        merged_lines = []
+        current_line = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                # Preserve paragraph breaks
+                if current_line:
+                    merged_lines.append(current_line)
+                    current_line = ""
+                if merged_lines and merged_lines[-1] != "":
+                    merged_lines.append("")
+                continue
+
+            # Check if previous line ended with sentence-ending punctuation
+            if current_line and current_line[-1] in ".!?;":
+                merged_lines.append(current_line)
+                current_line = line
+            else:
+                # Continue the sentence from previous line
+                if current_line:
+                    current_line += " " + line
+                else:
+                    current_line = line
+
+        # Add any remaining line
+        if current_line:
+            merged_lines.append(current_line)
+
+        # Join merged lines
+        t = "\n".join(merged_lines)
+
+        # Now extract sentences and ensure proper separation
+        # Split on sentence-ending punctuation (. ! ? ;) followed by whitespace
+        parts = re.split(r"([.!?;])\s+", t)
+
+        sentences = []
+        current_sentence = ""
+
+        for i, part in enumerate(parts):
+            if not part:
+                continue
+
+            # If this is a punctuation mark
+            if part in ".!?;":
+                current_sentence = current_sentence.rstrip() + part
+                # Check if next part starts with capital letter or is empty (end of text)
+                if i + 1 < len(parts):
+                    next_part = parts[i + 1].strip()
+                    # Add sentence if it's complete (next part starts with capital/digit or is empty)
+                    if current_sentence.strip() and (not next_part or next_part[0].isupper() or next_part[0].isdigit()):
+                        sentences.append(current_sentence.strip())
+                        current_sentence = ""
+                    elif current_sentence.strip():
+                        # Keep building the sentence (e.g., for abbreviations)
+                        current_sentence += " "
+                else:
+                    # Last punctuation mark
+                    if current_sentence.strip():
+                        sentences.append(current_sentence.strip())
+                        current_sentence = ""
+            else:
+                current_sentence += part.strip() + " "
+
+        # Add any remaining text as final sentence
+        if current_sentence.strip():
+            sentences.append(current_sentence.strip())
+
+        # Join sentences with newlines to ensure proper separation
+        result = "\n".join(sentences)
+
+        # Clean up excessive newlines
+        result = re.sub(r"\n{3,}", "\n\n", result)
+
+        return result
 
     def _chunk(self, text: str) -> List[str]:
         return self.text_splitter.split_text(text)
@@ -243,10 +323,12 @@ class AgentRunner:
                 vs = self._vector_store(chunks)
         except Exception as e:
             msg = str(e)
-            if self._embed_backend == "ollama" and (("model \"" in msg and "not found" in msg) or ("No such model" in msg) or ("not available" in msg)):
+            if self._embed_backend == "ollama" and (
+                ('model "' in msg and "not found" in msg) or ("No such model" in msg) or ("not available" in msg)
+            ):
                 raise EmbeddingModelMissingError(
                     f'Ollama embedding model "{settings.OLLAMA_EMBED_MODEL}" is not available. '
-                    f'Please run: ollama pull {settings.OLLAMA_EMBED_MODEL}'
+                    f"Please run: ollama pull {settings.OLLAMA_EMBED_MODEL}"
                 )
             # Propagate as service error
             raise LLMServiceError(f"Embedding backend error: {msg}")
@@ -264,14 +346,8 @@ class AgentRunner:
             "Extract ONLY the main title, not subtitles, author names, or journal names. "
             "If no clear title is found, respond with exactly: 'None'"
         )
-        sys_data_license = (
-            "Extract ONLY explicit data sharing license text if present.\n"
-            "Return 'None' if absent."
-        )
-        sys_code_license = (
-            "Extract ONLY explicit code/software license text if present.\n"
-            "Return 'None' if absent."
-        )
+        sys_data_license = "Extract ONLY explicit data sharing license text if present.\n" "Return 'None' if absent."
+        sys_code_license = "Extract ONLY explicit code/software license text if present.\n" "Return 'None' if absent."
 
         availability = self._availability_engine.extract(
             normalized_pages,
@@ -293,7 +369,9 @@ class AgentRunner:
         refs_match = re.search(r"(?im)^\s*(references|bibliography)\b", normalized)
         search_zone = normalized[: refs_match.start()] if refs_match else normalized
         search_zone = search_zone[:20000]
-        m = re.search(r"(?:doi:\s*)?(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s\"<>]+)", search_zone, flags=re.IGNORECASE)
+        m = re.search(
+            r"(?:doi:\s*)?(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s\"<>]+)", search_zone, flags=re.IGNORECASE
+        )
         if m:
             doi = validate_doi(m.group(1))
         if not doi:

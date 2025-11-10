@@ -172,7 +172,42 @@ class AgentRunner:
         t = t.replace("\r\n", "\n").replace("\r", "\n")
         t = re.sub(r"[ \t]{2,}", " ", t)
 
-        # Extract sentences and ensure proper separation
+        # Join lines that don't end with sentence-ending punctuation
+        # This handles text that wraps across lines mid-sentence
+        lines = t.split("\n")
+        merged_lines = []
+        current_line = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                # Preserve paragraph breaks
+                if current_line:
+                    merged_lines.append(current_line)
+                    current_line = ""
+                if merged_lines and merged_lines[-1] != "":
+                    merged_lines.append("")
+                continue
+
+            # Check if previous line ended with sentence-ending punctuation
+            if current_line and current_line[-1] in ".!?;":
+                merged_lines.append(current_line)
+                current_line = line
+            else:
+                # Continue the sentence from previous line
+                if current_line:
+                    current_line += " " + line
+                else:
+                    current_line = line
+
+        # Add any remaining line
+        if current_line:
+            merged_lines.append(current_line)
+
+        # Join merged lines
+        t = "\n".join(merged_lines)
+
+        # Now extract sentences and ensure proper separation
         # Split on sentence-ending punctuation (. ! ? ;) followed by whitespace
         parts = re.split(r"([.!?;])\s+", t)
 

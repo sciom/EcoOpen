@@ -91,3 +91,13 @@ class TestSentenceExtraction:
         assert "sentence !" not in result
         assert "sentence." in result
         assert "sentence!" in result
+
+    def test_sentence_wrapping_across_lines(self, runner):
+        """Test that sentences wrapping across lines are properly joined."""
+        text = "The data underlying this article\nare available in the repository. Next sentence."
+        result = runner._normalize_text(text)
+        # Should join the wrapped sentence
+        assert "article are available" in result
+        # Should still separate sentences
+        lines = [line.strip() for line in result.split("\n") if line.strip()]
+        assert len(lines) >= 2

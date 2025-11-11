@@ -28,6 +28,8 @@ streamlit_chroma_db/
 chroma_db/
 papers/
 *.pdf
+# Exception: keep test PDFs for workflow testing
+!example_papers/*.pdf
 
 # Frontend
 node_modules/

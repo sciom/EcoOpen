@@ -9,6 +9,7 @@ Mark as 'integration' and 'slow' since it requires:
 - Reachable LLM endpoint
 - Multiple PDF analyses (takes time)
 """
+
 import logging
 import os
 import time
@@ -339,6 +340,6 @@ def test_full_workflow():
     successful_count = sum(1 for r in suite.results if r.success)
     if successful_count > 0:
         assert suite.total_duration_ms > 0, "Total duration should be positive"
-        assert successful_count == len(suite.results), (
-            f"Some tests failed: {len(suite.results) - successful_count} out of {len(suite.results)}"
-        )
+        assert successful_count == len(
+            suite.results
+        ), f"Some tests failed: {len(suite.results) - successful_count} out of {len(suite.results)}"

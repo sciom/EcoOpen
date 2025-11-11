@@ -77,6 +77,18 @@ Response includes `title`, `doi`, availability statements, and normalized `data_
 
 For batch processing and CSV export, run MongoDB and use the UI or `POST /analyze/batch`.
 
+## Testing
+Run the test suite to verify functionality:
+```bash
+# Unit tests (no external services required)
+pytest tests/ -v -m "not integration"
+
+# Full workflow test (requires Ollama and LLM endpoint)
+pytest tests/test_workflow_full.py -v -s
+```
+
+The full workflow test assesses extraction accuracy and performance on example PDFs. See `tests/README.md` for details.
+
 ## Troubleshooting
 - Missing embeddings (Ollama): `ollama pull nomic-embed-text`
 - No database? Use `mode=sync` for single-file analysis

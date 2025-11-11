@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Sensible local default; override via ENV to your hosted model id
     AGENT_MODEL: str = Field(default="llama3.1")
     AGENT_API_KEY: Optional[str] = Field(default=None)
+    EMBEDDINGS_API_KEY: Optional[str] = Field(default=None)
     # HTTP timeout for agent calls in seconds (big models may need more time)
     AGENT_TIMEOUT_SECONDS: int = Field(default=120, ge=5, le=1800)
 
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
     EMBEDDINGS_BACKEND: str = Field(default="ollama")
     # Embedding model when using AGENT endpoint
     AGENT_EMBED_MODEL: str = Field(default="text-embedding-3-small")
+    EMBEDDINGS_BASE_URL: str | None = Field(default=None)
+
+    @field_validator("EMBEDDINGS_BASE_URL", mode="before")
+    @classmethod
+    def _normalize_embeddings_base(cls, v):
+        if not v:
+            return None
+        return str(v).strip().rstrip("/")
 
     # App
     MAX_FILE_SIZE_MB: int = Field(default=50, ge=1, le=500)
@@ -132,6 +141,14 @@ class Settings(BaseSettings):
     @field_validator("AGENT_API_KEY", mode="before")
     @classmethod
     def _normalize_agent_key(cls, v: Union[str, None]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("EMBEDDINGS_API_KEY", mode="before")
+    @classmethod
+    def _normalize_embed_key(cls, v: Union[str, None]) -> Optional[str]:
         if v is None:
             return None
         s = str(v).strip()

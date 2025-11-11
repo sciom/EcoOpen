@@ -140,8 +140,16 @@ async def append_job_log(
     duration_ms: Optional[int] = None,
     extra: Optional[Dict[str, Any]] = None,
     ts: Optional[dt.datetime] = None,
+    phase: Optional[str] = None,
+    progress_current: Optional[int] = None,
+    progress_total: Optional[int] = None,
+    percent: Optional[int] = None,
+    worker: Optional[str] = None,
 ) -> None:
-    """Append a log entry to the job_logs collection for the given job."""
+    """Append a log entry to the job_logs collection for the given job.
+
+    Added verbose optional fields: phase, progress snapshot, percent, worker identifier.
+    """
     db = get_db()
     entry: Dict[str, Any] = {
         "job_id": job_id,
@@ -158,9 +166,18 @@ async def append_job_log(
         entry["filename"] = filename
     if duration_ms is not None:
         entry["duration_ms"] = int(duration_ms)
+    if phase:
+        entry["phase"] = phase
+    if progress_current is not None:
+        entry["progress_current"] = int(progress_current)
+    if progress_total is not None:
+        entry["progress_total"] = int(progress_total)
+    if percent is not None:
+        entry["percent"] = int(percent)
+    if worker:
+        entry["worker"] = worker
     if extra:
         try:
-            # Avoid nesting very large data; shallow copy
             entry["extra"] = dict(extra)
         except Exception:
             entry["extra"] = {"note": "unserializable extra"}

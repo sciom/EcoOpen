@@ -206,15 +206,21 @@
                 <div class="log-main">
                   <div class="line">
                     <span v-if="row.op" class="op">[{{ row.op }}]</span>
+                    <span v-if="row.phase" class="phase">({{ row.phase }})</span>
                     <span class="msg">{{ row.message || '' }}</span>
                     <span v-if="row.duration_ms != null" class="dur">{{ row.duration_ms }}ms</span>
+                    <span v-if="row.percent != null" class="pct-chip">{{ row.percent }}%</span>
                   </div>
                   <div class="meta">
                     <span v-if="row.filename" class="chip"><i class="fas fa-file"></i> {{ row.filename }}</span>
                     <span v-if="row.doc_id" class="chip mono"><i class="fas fa-hashtag"></i> {{ row.doc_id }}</span>
+                    <span v-if="row.worker" class="chip"><i class="fas fa-microchip"></i> {{ row.worker }}</span>
+                    <span v-if="row.progress_current != null && row.progress_total != null" class="chip">
+                      <i class="fas fa-percent"></i> {{ row.progress_current }}/{{ row.progress_total }}
+                    </span>
                   </div>
-                  <details v-if="row.extra && (row.extra.error || row.extra.trace)" class="extra">
-                    <summary><i class="fas fa-bug"></i> Error details</summary>
+                  <details v-if="row.extra" class="extra">
+                    <summary><i class="fas fa-bug"></i> Extra</summary>
                     <pre>{{ pretty(row.extra) }}</pre>
                   </details>
                 </div>
@@ -487,6 +493,9 @@ async function fetchLogs() {
 .bar { height:10px; background:#e2e8f0; border-radius:6px; flex:1; overflow:hidden; }
 .fill { height:100%; background:linear-gradient(90deg,#805ad5 0%, #9f7aea 100%); transition:width .4s ease; }
 .pct { font-weight:600; color:#2d3748; width:40px; text-align:right; }
+.op { font-weight:700; color:#2d3748; margin-right: .25rem; }
+.phase { color:#4a5568; margin-right:.25rem; }
+.pct-chip { margin-left:.5rem; background:#edf2f7; border:1px solid #cbd5e0; border-radius:999px; padding:0 .4rem; font-size:.8rem; }
 .job-actions { display:flex; flex-direction:column; gap:0.5rem; width:140px; }
 .action { display:flex; align-items:center; justify-content:center; gap:0.5rem; padding:0.5rem; border-radius:8px; border:1px solid #cbd5e0; background:#f7fafc; color:#2d3748; cursor:pointer; font-weight:600; }
 .action.success { background:linear-gradient(135deg,#38a169 0%, #2f855a 100%); color:white; border:none; }

@@ -50,9 +50,10 @@ async def health() -> HealthModel:
             # Use AGENT_BASE_URL and verify the embedding model exists in /models
             async with httpx.AsyncClient(timeout=3.0) as client:
                 headers = {}
-                if settings.AGENT_API_KEY:
-                    headers["Authorization"] = f"Bearer {settings.AGENT_API_KEY}"
-                base = settings.AGENT_BASE_URL.rstrip("/")
+                auth_key = settings.EMBEDDINGS_API_KEY or settings.AGENT_API_KEY
+                if auth_key:
+                    headers["Authorization"] = f"Bearer {auth_key}"
+                base = (settings.EMBEDDINGS_BASE_URL or settings.AGENT_BASE_URL).rstrip("/")
                 bases = {base, base.removesuffix("/v1")} if base.endswith("/v1") else {base}
                 paths = []
                 for b in bases:
@@ -129,6 +130,7 @@ async def get_config():
         "ollama_host": settings.OLLAMA_HOST,
         "ollama_model": settings.OLLAMA_MODEL,
         "ollama_embed_model": settings.OLLAMA_EMBED_MODEL,
+        "embeddings_base_url": settings.EMBEDDINGS_BASE_URL,
         "max_file_size_mb": settings.MAX_FILE_SIZE_MB,
         "cors_origins": settings.CORS_ORIGINS,
     }

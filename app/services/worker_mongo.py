@@ -51,7 +51,7 @@ async def _claim_next_document() -> Optional[dict]:
             jid = str(promoted.get("_id"))
             claim_filter["job_id"] = jid
             try:
-                await append_job_log(jid, op="job_started")
+                await append_job_log(jid, op="job_started", phase="job", message="Job promoted to running", worker=f"pid:{os.getpid()}")
             except Exception:
                 pass
         else:
@@ -71,7 +71,7 @@ async def _claim_next_document() -> Optional[dict]:
         try:
             jid = doc.get("job_id")
             if jid:
-                await append_job_log(jid, op="doc_claimed", doc_id=str(doc.get("_id")), filename=(doc.get("filename") or "document.pdf").replace(os.sep, "_"))
+                await append_job_log(jid, op="doc_claimed", phase="claim", message="Document claimed for processing", doc_id=str(doc.get("_id")), filename=(doc.get("filename") or "document.pdf").replace(os.sep, "_"), worker=f"pid:{os.getpid()}", progress_current=None, progress_total=None)
         except Exception:
             pass
     return doc
@@ -89,7 +89,7 @@ async def _process_one(doc: dict) -> None:
             # GridFS read with job log instrumentation
             if job_id:
                 try:
-                    await append_job_log(job_id, op="gridfs_read_start", doc_id=doc_id, filename=filename)
+                    await append_job_log(job_id, op="gridfs_read_start", phase="read", message="GridFS read start", doc_id=doc_id, filename=filename, worker=f"pid:{os.getpid()}", progress_current=None, progress_total=None)
                 except Exception:
                     pass
             with log_timing(logger, "gridfs_read", doc_id=doc_id, job_id=job_id, filename=filename):
@@ -100,7 +100,7 @@ async def _process_one(doc: dict) -> None:
                         dt_ms = int((time.perf_counter() - t0) * 1000)
                         await append_job_log(
                             job_id,
-                            op="gridfs_read_end",
+                            op="gridfs_read_end", phase="read", message="GridFS read complete", worker=f"pid:{os.getpid()}",
                             doc_id=doc_id,
                             filename=filename,
                             duration_ms=dt_ms,
@@ -112,7 +112,7 @@ async def _process_one(doc: dict) -> None:
             agent = AgentRunner(context={"doc_id": doc_id, "job_id": job_id, "filename": filename})
             if job_id:
                 try:
-                    await append_job_log(job_id, op="analyze_pdf_start", doc_id=doc_id, filename=filename)
+                    await append_job_log(job_id, op="analyze_pdf_start", phase="analyze", message="Analyze start", doc_id=doc_id, filename=filename, worker=f"pid:{os.getpid()}")
                 except Exception:
                     pass
             with log_timing(logger, "analyze_pdf", doc_id=doc_id, job_id=job_id, filename=filename):
@@ -123,7 +123,7 @@ async def _process_one(doc: dict) -> None:
                         dt_ms = int((time.perf_counter() - t1) * 1000)
                         await append_job_log(
                             job_id,
-                            op="analyze_pdf_end",
+                            op="analyze_pdf_end", phase="analyze", message="Analyze complete", worker=f"pid:{os.getpid()}",
                             doc_id=doc_id,
                             filename=filename,
                             duration_ms=dt_ms,
@@ -143,7 +143,7 @@ async def _process_one(doc: dict) -> None:
                 try:
                     await append_job_log(
                         job_id,
-                        level="error",
+                        level="error", phase="error", worker=f"pid:{os.getpid()}",
                         op="error",
                         message=err_text,
                         doc_id=doc_id,
@@ -163,7 +163,7 @@ async def _process_one(doc: dict) -> None:
     # On success, append a completion log
     if job_id and (await get_job(job_id)):
         try:
-            await append_job_log(job_id, op="doc_done", doc_id=doc_id, filename=filename)
+            await append_job_log(job_id, op="doc_done", phase="complete", message="Document processing complete", doc_id=doc_id, filename=filename, worker=f"pid:{os.getpid()}")
         except Exception:
             pass
 
@@ -174,10 +174,19 @@ async def _process_one(doc: dict) -> None:
         if job:
             cur = ((job.get("progress") or {}).get("current")) or 0
             total = ((job.get("progress") or {}).get("total")) or 0
+            # Emit progress snapshot
+            try:
+                pct = int(round((cur / total) * 100)) if total else 0
+            except Exception:
+                pct = 0
+            try:
+                await append_job_log(job_id, op="progress", phase="progress", message=f"Progress: {cur}/{total}", progress_current=cur, progress_total=total, percent=pct, worker=f"pid:{os.getpid()}")
+            except Exception:
+                pass
             if cur >= total and (job.get("status") != "done"):
                 await set_job_status(job_id, "done")
                 try:
-                    await append_job_log(job_id, op="job_done")
+                    await append_job_log(job_id, op="job_done", phase="job", message="Job completed", progress_current=cur, progress_total=total, percent=100, worker=f"pid:{os.getpid()}")
                 except Exception:
                     pass
                 # After finishing a job, try to promote the next one
@@ -228,7 +237,7 @@ class MongoWorker:
                             try:
                                 await append_job_log(
                                     job_id,
-                                    level="error",
+                        level="error", phase="error", worker=f"pid:{os.getpid()}",
                                     op="error",
                                     message=err_text,
                                     doc_id=did,

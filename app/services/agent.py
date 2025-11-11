@@ -79,7 +79,17 @@ class EndpointEmbeddings(Embeddings):
                             vectors.append(vec)
                         return vectors
                     if r.status_code in (404, 405):
-                        raise LLMServiceError("Embeddings endpoint /v1/embeddings not found on AGENT_BASE_URL")
+                        body = (r.text or "")[:200]
+                        msg = "Embeddings endpoint /v1/embeddings unavailable or model not found"
+                        try:
+                            data = r.json()
+                            if isinstance(data, dict):
+                                errtxt = data.get("error") or data.get("message") or ""
+                                if errtxt:
+                                    msg = f"Embeddings 404: {errtxt[:180]}"
+                        except Exception:
+                            pass
+                        raise LLMServiceError(msg)
                     if r.status_code in (408, 429) or 500 <= r.status_code < 600:
                         last_err = LLMServiceError(f"Embeddings error {r.status_code}: {r.text[:200]}")
                         continue
@@ -113,9 +123,10 @@ class AgentRunner:
         # Embeddings backend selection
         self._embed_backend = (settings.EMBEDDINGS_BACKEND or "ollama").lower()
         if self._embed_backend == "endpoint":
+            embed_base = settings.EMBEDDINGS_BASE_URL or settings.AGENT_BASE_URL
             self.embeddings = EndpointEmbeddings(
-                base_url=settings.AGENT_BASE_URL,
-                api_key=settings.AGENT_API_KEY,
+                base_url=embed_base,
+                api_key=(settings.EMBEDDINGS_API_KEY or settings.AGENT_API_KEY),
                 model=settings.AGENT_EMBED_MODEL,
             )
         else:

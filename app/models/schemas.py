@@ -96,4 +96,10 @@ class JobLogEntryModel(BaseModel):
     doc_id: Optional[str] = None
     filename: Optional[str] = None
     duration_ms: Optional[int] = None
+    # Additional verbosity fields (optional)
+    phase: Optional[str] = None
+    progress_current: Optional[int] = None
+    progress_total: Optional[int] = None
+    percent: Optional[int] = None
+    worker: Optional[str] = None
     extra: Optional[Dict[str, Any]] = None

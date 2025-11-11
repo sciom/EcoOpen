@@ -21,6 +21,7 @@ class PDFAnalysisResultModel(BaseModel):
     data_links: List[str] = Field(default_factory=list)
     code_links: List[str] = Field(default_factory=list)
     confidence_scores: Dict[str, float] = Field(default_factory=dict)
+    debug_info: Optional[Dict[str, Any]] = None
     # For synchronous API responses
     source_file: Optional[str] = None
     # Optional error for per-document failures in batch summaries

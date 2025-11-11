@@ -5,6 +5,18 @@ import re
 from typing import Optional
 
 
+def is_pdf_bytes(data: bytes) -> bool:
+    """
+    Quick check for PDF magic header.
+
+    Returns True if the content looks like a PDF based on the leading bytes.
+    """
+    try:
+        return isinstance(data, (bytes, bytearray)) and len(data) >= 5 and bytes(data)[:5] == b"%PDF-"
+    except Exception:
+        return False
+
+
 def validate_doi(doi: Optional[str]) -> Optional[str]:
     """
     Validate and normalize a DOI string.

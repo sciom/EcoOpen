@@ -1,6 +1,10 @@
+import itertools
+import json
 import logging
 import re
-from typing import Dict, List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
 from uuid import uuid4
 
 import chromadb
@@ -27,6 +31,7 @@ from app.models.schemas import PDFAnalysisResultModel
 from app.services import log_timing
 from app.services.availability import AvailabilityEngine
 from app.services.llm_client import ChatMessage, get_llm_client
+from app.services.text_normalizer import PDFTextNormalizer, ParagraphBlock
 
 logger = logging.getLogger(__name__)
 
@@ -44,34 +49,48 @@ class EndpointEmbeddings(Embeddings):
         return h
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        base = self._base
         try:
-            with httpx.Client(timeout=60.0) as client:
-                # Always use OpenAI-style v1 embeddings endpoint
-                base = self._base
-                try:
-                    base = base.removesuffix("/v1")
-                except Exception:
-                    pass
-                url = f"{base}/v1/embeddings"
-                payload = {"model": self._model, "input": texts}
-                r = client.post(url, json=payload, headers=self._headers())
-                if 200 <= r.status_code < 300:
-                    data = r.json()
-                    items = data.get("data") or []
-                    if not items:
-                        raise LLMServiceError("Embedding response missing data")
-                    vectors: List[List[float]] = []
-                    for item in items:
-                        vec = item.get("embedding") or item.get("vector")
-                        if not isinstance(vec, list):
-                            raise LLMServiceError("Invalid embedding format from endpoint")
-                        vectors.append(vec)
-                    return vectors
-                if r.status_code in (404, 405):
-                    raise LLMServiceError("Embeddings endpoint /v1/embeddings not found on AGENT_BASE_URL")
-                raise LLMServiceError(f"Embeddings error {r.status_code}: {r.text[:200]}")
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
-            raise LLMServiceError(f"Embeddings service unavailable: {e}")
+            base = base.removesuffix("/v1")
+        except Exception:
+            pass
+        url = f"{base}/v1/embeddings"
+        payload = {"model": self._model, "input": texts}
+        delays = [0.0, 0.5, 1.0, 2.0]
+        last_err: Optional[Exception] = None
+        for delay in delays:
+            if delay:
+                import time as _t
+                _t.sleep(delay)
+            try:
+                with httpx.Client(timeout=60.0) as client:
+                    r = client.post(url, json=payload, headers=self._headers())
+                    if 200 <= r.status_code < 300:
+                        data = r.json()
+                        items = data.get("data") or []
+                        if not items:
+                            raise LLMServiceError("Embedding response missing data")
+                        vectors: List[List[float]] = []
+                        for item in items:
+                            vec = item.get("embedding") or item.get("vector")
+                            if not isinstance(vec, list):
+                                raise LLMServiceError("Invalid embedding format from endpoint")
+                            vectors.append(vec)
+                        return vectors
+                    if r.status_code in (404, 405):
+                        raise LLMServiceError("Embeddings endpoint /v1/embeddings not found on AGENT_BASE_URL")
+                    if r.status_code in (408, 429) or 500 <= r.status_code < 600:
+                        last_err = LLMServiceError(f"Embeddings error {r.status_code}: {r.text[:200]}")
+                        continue
+                    raise LLMServiceError(f"Embeddings error {r.status_code}: {r.text[:200]}")
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_err = LLMServiceError(f"Embeddings service unavailable: {e}")
+                continue
+            except Exception as e:
+                last_err = LLMServiceError(f"Embeddings service error: {e}")
+                break
+        assert last_err is not None
+        raise last_err
 
     def embed_query(self, text: str) -> List[float]:
         return self.embed_documents([text])[0]
@@ -119,6 +138,7 @@ class AgentRunner:
         self._agent_base_url = settings.AGENT_BASE_URL.rstrip("/")
         self._agent_model = settings.AGENT_MODEL
         self._agent_api_key = settings.AGENT_API_KEY
+        self._text_normalizer = PDFTextNormalizer() if pdfplumber is not None else None
         self._availability_engine = AvailabilityEngine(
             data_allowed_domains=settings.DATA_LINK_ALLOWED_DOMAINS,
             code_allowed_domains=settings.CODE_LINK_ALLOWED_DOMAINS,
@@ -136,25 +156,35 @@ class AgentRunner:
         with log_timing(logger, "llm_chat", model=self._agent_model, **self._ctx):
             return client.chat_complete(messages, model=self._agent_model, temperature=0.0)
 
-    def _load_pdf_pages(self, pdf_path: str) -> List[str]:
+    def _load_pdf_blocks(self, pdf_path: str) -> List[ParagraphBlock]:
         try:
-            pages: List[str] = []
-            if pdfplumber is not None:
+            if self._text_normalizer is not None:
                 try:
-                    with pdfplumber.open(pdf_path) as pdf:
-                        for page in pdf.pages:
-                            text = page.extract_text(layout=True) or ""
-                            if text:
-                                pages.append(text)
-                except Exception:
-                    pages = []
-            if not pages:
-                loader = PyPDFLoader(pdf_path)
-                docs = loader.load()
-                pages = [doc.page_content for doc in docs if doc.page_content]
-            if not pages:
+                    blocks = self._text_normalizer.extract(pdf_path)
+                    if blocks:
+                        return blocks
+                except Exception as exc:
+                    logger.debug("text_normalizer_failed %s", exc, exc_info=True)
+
+            loader = PyPDFLoader(pdf_path)
+            docs = loader.load()
+            fallback_blocks: List[ParagraphBlock] = []
+            counter = itertools.count()
+            for idx, doc in enumerate(docs):
+                text = (doc.page_content or "").strip()
+                if not text:
+                    continue
+                fallback_blocks.append(
+                    ParagraphBlock(
+                        text=text,
+                        page=idx + 1,
+                        column=0,
+                        seq=next(counter),
+                    )
+                )
+            if not fallback_blocks:
                 raise InvalidPDFError("PDF appears to be empty or unreadable")
-            return pages
+            return fallback_blocks
         except InvalidPDFError:
             raise
         except Exception as e:
@@ -170,6 +200,29 @@ class AgentRunner:
         t = re.sub(r"\n{3,}", "\n\n", t)
         t = re.sub(r"[ \t]{2,}", " ", t)
         return t
+
+    def _heuristic_title(self, blocks: Sequence[ParagraphBlock]) -> Optional[str]:
+        for block in blocks:
+            if block.page > 1:
+                break
+            if block.column > 0:
+                continue
+            candidate = self._normalize_text(block.text).strip()
+            candidate = re.sub(r"\s+", " ", candidate)
+            if not candidate or candidate.endswith(":"):
+                continue
+            if len(candidate) < 12 or len(candidate) > 180:
+                continue
+            words = candidate.split()
+            if len(words) < 3 or len(words) > 25:
+                continue
+            lower = candidate.lower()
+            if any(stop in lower for stop in ("abstract", "introduction", "copyright", "doi", "license", "keywords", "data availability", "authors", "affiliations", "received", "accepted")):
+                continue
+            if sum(1 for ch in candidate if ch.isalpha()) < 0.5 * len(candidate):
+                continue
+            return candidate
+        return None
 
     def _chunk(self, text: str) -> List[str]:
         return self.text_splitter.split_text(text)
@@ -227,13 +280,43 @@ class AgentRunner:
             return validate_doi(m.group(1))
         return validate_doi(s)
 
+    def _persist_diagnostics(self, diagnostics: Dict[str, object]) -> None:
+        try:
+            base_dir = Path(__file__).resolve().parent.parent
+            log_dir = base_dir / "logs" / "availability"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            context_id = str(
+                self._ctx.get("doc_id")
+                or self._ctx.get("filename")
+                or self._ctx.get("job_id")
+                or "unknown"
+            )
+            safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", context_id)
+            logfile = log_dir / f"{timestamp}_{safe_id}.json"
+            payload = {
+                "timestamp": timestamp,
+                "context": self._ctx,
+                "diagnostics": diagnostics,
+            }
+            with logfile.open("w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False, indent=2)
+        except Exception:
+            logger.exception("Failed to persist availability diagnostics")
+
     def analyze(self, pdf_path: str) -> PDFAnalysisResultModel:
         # Load and clean text
         with log_timing(logger, "load_pdf", **self._ctx):
-            pages = self._load_pdf_pages(pdf_path)
+            blocks = self._load_pdf_blocks(pdf_path)
         with log_timing(logger, "normalize_text", **self._ctx):
-            normalized_pages = [self._normalize_text(page) for page in pages]
+            normalized_pages = [self._normalize_text(block.text) for block in blocks]
             normalized = "\n\n".join(normalized_pages)
+        normalizer_meta = {
+            "block_count": len(blocks),
+            "first_page_blocks": sum(1 for b in blocks if b.page == 1),
+            "columns_first_page": len({b.column for b in blocks if b.page == 1}),
+            "first_block_preview": blocks[0].text[:200] if blocks else None,
+        }
 
         # Chunk and build vector store
         with log_timing(logger, "chunk_text", **self._ctx):
@@ -276,16 +359,19 @@ class AgentRunner:
         availability = self._availability_engine.extract(
             normalized_pages,
             chat_fn=lambda system, user: self._chat(system, user),
-            diagnostics=logger.isEnabledFor(logging.DEBUG),
+            diagnostics=True,
         )
         if availability.diagnostics:
+            availability.diagnostics.setdefault("normalizer", normalizer_meta)
             logger.debug("availability_diagnostics %s", availability.diagnostics)
+            self._persist_diagnostics(availability.diagnostics)
 
         data_stmt = availability.data_statement
         code_stmt = availability.code_statement
         data_links = availability.data_links
         code_links = availability.code_links
         confidence_scores: Dict[str, float] = dict(availability.confidence_scores)
+        debug_info = availability.diagnostics if settings.EXPOSE_AVAILABILITY_DEBUG else None
 
         # DOI: deterministic front-matter first, then LLM fallback
         doi = None
@@ -305,10 +391,16 @@ class AgentRunner:
                     "front matter citation DOI",
                 ],
                 k_each=4,
-                max_chars=6000,
+                max_chars=4000,
             )
             if doi_ctx:
-                doi_raw = self._chat(sys_doi, f"Text:\n{doi_ctx}\n\nReturn ONLY the DOI or 'None'.")
+                if len(doi_ctx) > 4000:
+                    doi_ctx = doi_ctx[:4000]
+                try:
+                    doi_raw = self._chat(sys_doi, f"Text:\n{doi_ctx}\n\nReturn ONLY the DOI or 'None'.")
+                except LLMServiceError as exc:
+                    logger.warning("doi_chat_failed: %s", exc)
+                    doi_raw = None
                 doi = self._validate_doi(doi_raw) if doi_raw else None
         if not doi:
             # Final regex sweep over the whole document
@@ -325,15 +417,28 @@ class AgentRunner:
                         break
 
         # Title
-        title = self._extract_single(
-            vs,
-            query="title abstract introduction paper study research",
-            system=sys_title,
-            label="title",
-            k=4,
-        )
-        if title and (len(title) < 10 or len(title) > 300):
-            title = None
+        title = self._heuristic_title(blocks)
+        title_source = "heuristic"
+        heuristic_title = title
+        if not title:
+            title = self._extract_single(
+                vs,
+                query="title abstract introduction paper study research",
+                system=sys_title,
+                label="title",
+                k=4,
+            )
+            if title and (len(title) < 10 or len(title) > 300):
+                title = None
+            title_source = "llm"
+        if availability.diagnostics is not None:
+            availability.diagnostics["title_debug"] = {
+                "heuristic": heuristic_title,
+                "final": title,
+                "source": title_source if title else None,
+            }
+            if settings.EXPOSE_AVAILABILITY_DEBUG:
+                debug_info = availability.diagnostics
 
         # Licenses
         data_license = self._extract_single(
@@ -366,4 +471,5 @@ class AgentRunner:
             data_links=data_links,
             code_links=code_links,
             confidence_scores=confidence_scores,
+            debug_info=debug_info,
         )

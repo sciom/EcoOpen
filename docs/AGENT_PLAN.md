@@ -9,7 +9,7 @@
 ## Model Endpoint
 - Agent model: `gpt-oss:120b`
 - Base URL: `https://teal-fast-suitably.ngrok-free.app/v1` (OpenAI-compatible)
-- Configurable env: `AGENT_BASE_URL`, `AGENT_MODEL`, optional `AGENT_API_KEY`
+- Configurable env: `AGENT_BASE_URL`, `AGENT_MODEL`, optional `AGENT_API_KEY`, `EMBEDDINGS_BACKEND`, `AGENT_EMBED_MODEL`
 
 ## Backend (FastAPI)
 - Endpoints:

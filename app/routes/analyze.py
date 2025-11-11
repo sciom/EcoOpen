@@ -5,7 +5,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
-from app.core.validation import sanitize_filename, validate_file_extension
+from app.core.validation import sanitize_filename, validate_file_extension, is_pdf_bytes
 from app.models.schemas import PDFAnalysisResultModel, BatchStatusModel, BatchProgress
 from app.services.agent import AgentRunner
 from app.core.errors import (
@@ -115,6 +115,9 @@ async def analyze(file: UploadFile = File(...),
     content = await file.read()
     if len(content) > MAX_BYTES:
         raise HTTPException(status_code=400, detail=f"File exceeds {settings.MAX_FILE_SIZE_MB} MB limit")
+    # Magic header check to ensure it's a PDF
+    if not is_pdf_bytes(content):
+        raise HTTPException(status_code=400, detail="Invalid PDF content (bad header)")
 
     # Synchronous path focuses on core PDF reading and analysis without DB dependency
     if mode == "sync":
@@ -216,13 +219,14 @@ async def analyze(file: UploadFile = File(...),
         await asyncio.sleep(interval_s)
         waited += interval_s
 
-    # Fallback: run sync, persist into document for consistency
+    # Fallback: run sync, mark as processing, and persist into document for consistency
+    await set_document_status(doc_id, "processing")
     tmp_path = f"/tmp/{os.getpid()}_{safe_filename}"
     with open(tmp_path, "wb") as f:
         f.write(content)
     try:
         agent = AgentRunner()
-        model_res = agent.analyze(tmp_path)
+        model_res = await asyncio.to_thread(agent.analyze, tmp_path)
         model_res.source_file = safe_filename
         try:
             await set_document_analysis(doc_id, {
@@ -278,6 +282,8 @@ async def analyze_batch(files: List[UploadFile] = File(...), user: dict = Depend
         content = await f.read()
         if len(content) > MAX_BYTES:
             raise HTTPException(status_code=400, detail=f"File {safe_filename} exceeds {settings.MAX_FILE_SIZE_MB} MB limit")
+        if not is_pdf_bytes(content):
+            raise HTTPException(status_code=400, detail=f"File {safe_filename} is not a valid PDF (bad header)")
         checksum = _compute_sha256(content)
         grid_id = await put_file(content, safe_filename, f.content_type or "application/pdf", {
             "filename": safe_filename,

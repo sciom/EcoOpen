@@ -247,6 +247,9 @@ class AvailabilityEngine:
             if any(deny in lower for deny in self._deny_substrings):
                 score -= 1.5
 
+            if para.text.strip().endswith(":") and len(para.text.strip()) < 80:
+                score -= 3.0
+
             if score <= 0.5:
                 continue
 
@@ -343,40 +346,55 @@ class AvailabilityEngine:
             confidence = llm_entry.get("confidence")
             raw_text = str(raw_quote).strip() if isinstance(raw_quote, str) else ""
             if verdict == "present" and raw_text and raw_text.lower() != "none":
-                if self._quote_in_contexts(raw_text, contexts) and self._contains_availability_keywords(raw_text, label=label):
-                    filtered_links = self._filter_links(raw_text, links, label=label)
-                    final_statement = str(clean_stmt).strip() if isinstance(clean_stmt, str) and clean_stmt.strip().lower() != "none" else raw_text
-                    final_statement = self._repair_spacing(final_statement)
+                canonical_raw = self._canonicalize_urls(self._repair_spacing(raw_text))
+                if self._quote_in_contexts(canonical_raw, contexts) and self._contains_availability_keywords(canonical_raw, label=label):
+                    filtered_links = self._filter_links(canonical_raw, links, label=label)
+                    final_statement_raw = str(clean_stmt).strip() if isinstance(clean_stmt, str) and clean_stmt.strip().lower() != "none" else canonical_raw
+                    final_statement = self._canonicalize_urls(self._repair_spacing(final_statement_raw))
                     conf = self._normalize_confidence(confidence, base=0.75)
-                    return self._Result(statement=final_statement, raw_quote=raw_text, links=filtered_links, confidence=conf, fallback=False)
+                    return self._Result(statement=final_statement, raw_quote=canonical_raw, links=filtered_links, confidence=conf, fallback=False)
 
         # fallback using the best context sentences
-        if not contexts:
-            return self._Result(statement=None, raw_quote=None, links=[], confidence=0.0, fallback=True)
-
-        best = contexts[0]
-        trimmed = self._trim_sentences(best.text, label=label)
-        if not trimmed:
-            return self._Result(statement=None, raw_quote=None, links=[], confidence=0.0, fallback=True)
-        extracted_links = self._filter_links(trimmed, [], label=label)
-        base_conf = min(0.6, best.score / 8.0)
-        return self._Result(statement=trimmed, raw_quote=trimmed, links=extracted_links, confidence=base_conf, fallback=True)
+        for candidate in contexts:
+            trimmed = self._trim_sentences(candidate.text, label=label)
+            if not trimmed:
+                continue
+            extracted_links = self._filter_links(trimmed, [], label=label)
+            base_conf = min(0.6, candidate.score / 8.0)
+            return self._Result(statement=trimmed, raw_quote=trimmed, links=extracted_links, confidence=base_conf, fallback=True)
+        if contexts:
+            first = contexts[0]
+            cleaned = self._canonicalize_urls(self._repair_spacing(first.text))
+            if self._contains_availability_keywords(cleaned, label=label):
+                extracted_links = self._filter_links(cleaned, [], label=label)
+                base_conf = min(0.4, first.score / 10.0)
+                return self._Result(statement=cleaned, raw_quote=None, links=extracted_links, confidence=base_conf, fallback=True)
+        return self._Result(statement=None, raw_quote=None, links=[], confidence=0.0, fallback=True)
 
     def _quote_in_contexts(self, quote: str, contexts: Sequence[RankedContext]) -> bool:
-        normalized_quote = _normalize_text(quote)
+        normalized_quote = _normalize_text(self._canonicalize_urls(quote))
         for ctx in contexts:
-            ctx_norm = _normalize_text(ctx.text)
+            ctx_norm = _normalize_text(self._canonicalize_urls(ctx.text))
             if normalized_quote and normalized_quote in ctx_norm:
                 return True
         return False
 
     def _contains_availability_keywords(self, text: str, *, label: str) -> bool:
         lower = text.lower()
-        if not any(token in lower for token in ("avail", "accessible", "access", "request", "provided", "supplied", "deposited", "archived", "shared")):
-            return False
-        if label == "data":
-            return any(term in lower for term in ("data", "dataset", "supplementary", "repository", "zenodo", "dryad", "figshare", "osf", "dataverse", "pangaea", "archive"))
-        return any(term in lower for term in ("code", "software", "script", "analysis", "github", "gitlab", "bitbucket", "source", "notebook"))
+        padding = r"[-\s\w,;:/\(\)]{0,80}"
+        pattern_data = re.compile(
+            r"(?:code\s+and\s+raw\s+data|data(?:set|s)?|supplementary(?:\s+materials)?|raw data|materials|open data|data availability statement)"
+            + padding
+            + r"(available|accessible|deposited|provided|shared|request|archiv|badge)",
+            re.IGNORECASE,
+        )
+        pattern_code = re.compile(
+            r"(code|software|scripts?|analysis|notebook|pipeline|source code|code availability statement)"
+            + padding
+            + r"(available|accessible|provided|shared|repository|github|gitlab|bitbucket)",
+            re.IGNORECASE,
+        )
+        return bool(pattern_data.search(text) if label == "data" else pattern_code.search(text))
 
     def _normalize_confidence(self, value: object, *, base: float) -> float:
         if isinstance(value, (int, float)):
@@ -391,26 +409,47 @@ class AvailabilityEngine:
         sentences = [s.strip() for s in sentences if s.strip()]
         if not sentences:
             return None
-        if len(sentences) == 1:
-            return sentences[0]
-        preferred: List[str] = []
         for sentence in sentences:
-            low = sentence.lower()
-            if label == "data" and ("data" in low and "avail" in low):
-                preferred.append(sentence)
-            elif label == "code" and (("code" in low or "software" in low) and ("avail" in low or "github" in low or "gitlab" in low)):
-                preferred.append(sentence)
-            if preferred:
-                break
-        if preferred:
-            return " ".join(preferred)
-        return " ".join(sentences[:2])
+            if self._contains_availability_keywords(sentence, label=label):
+                return sentence
+        for i in range(len(sentences) - 1):
+            combo = f"{sentences[i]} {sentences[i + 1]}"
+            if self._contains_availability_keywords(combo, label=label):
+                return combo
+        return None
 
     def _repair_spacing(self, text: str) -> str:
-        repaired = re.sub(r"\s+", " ", text.replace(" - ", "-"))
+        repaired = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
+        repaired = re.sub(r"\s+", " ", repaired.replace(" - ", "-"))
         repaired = repaired.replace(" ,", ",").replace(" .", ".")
         repaired = re.sub(r"\s+:", ":", repaired)
         return repaired.strip()
+
+    def _canonicalize_urls(self, text: str) -> str:
+        cleaned = re.sub(
+            r"https?://urldefense\.com/v3/__/?(?P<url>https?://[^\s]+)",
+            lambda m: m.group("url"),
+            text,
+            flags=re.IGNORECASE,
+        )
+        pattern = re.compile(r"(https?://[^\s]+)\s+([^\s])")
+        while True:
+            def repl(match: re.Match[str]) -> str:
+                follower = match.group(2)
+                tail = match.string[match.end(0) : match.end(0) + 12]
+                if follower in "/?-_=.":
+                    return match.group(1) + follower
+                if any(ch in "/?-_=." for ch in tail):
+                    return match.group(1) + follower
+                if match.group(1).endswith(("=", "-", "_")):
+                    return match.group(1) + follower
+                return match.group(1) + " " + follower
+
+            updated = pattern.sub(repl, cleaned)
+            if updated == cleaned:
+                break
+            cleaned = updated
+        return cleaned
 
     def _filter_links(self, context_text: str, links: Iterable[object], *, label: str) -> List[str]:
         collected: List[str] = []

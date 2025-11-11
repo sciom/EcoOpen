@@ -118,6 +118,7 @@ class Settings(BaseSettings):
             "10.18112",
         ]
     )
+    EXPOSE_AVAILABILITY_DEBUG: bool = Field(default=False)
 
     # --- Validators / Normalizers ---
     @field_validator("AGENT_BASE_URL", mode="before")

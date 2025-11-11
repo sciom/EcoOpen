@@ -38,6 +38,13 @@ async def lifespan(app: FastAPI):
         yield
 
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL, logging.INFO), format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+
+# Startup security warning for default JWT secret
+if (settings.JWT_SECRET or "").strip() == "change-me-in-prod":
+    logging.getLogger(__name__).warning(
+        "JWT_SECRET is using the insecure default. Set a strong secret in production."
+    )
+
 app = FastAPI(title="PDF Scientific Data Extractor API", version="0.1.0", lifespan=lifespan)
 
 

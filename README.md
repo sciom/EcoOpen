@@ -18,7 +18,9 @@ FastAPI + Vue app that extracts structured research metadata from PDF papers: DO
 - Backend (choose one)
   - Conda: `./setup_conda.sh && conda activate ecoopen-llm`
   - venv: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
-- Configure (optional): `cp .env.example .env` and set `AGENT_BASE_URL`/`AGENT_MODEL` (and `JWT_SECRET` for production)
+- Configure (optional): `cp .env.example .env` and set `AGENT_BASE_URL`/`AGENT_MODEL` (and `JWT_SECRET` for production). For embeddings choose:
+  - `EMBEDDINGS_BACKEND=endpoint` with `AGENT_EMBED_MODEL=<id>` to use the same OpenAI-compatible server for embeddings, or
+  - `EMBEDDINGS_BACKEND=ollama` with `OLLAMA_HOST` and `OLLAMA_EMBED_MODEL` (e.g., `nomic-embed-text`).
 
 ## Run
 - API: `./run_api.sh` → http://localhost:8000

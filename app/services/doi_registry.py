@@ -48,6 +48,17 @@ class DOIRegistry:
             return
         self._cache[key] = (time.time(), data)
 
+    def _headers(self) -> Dict[str, str]:
+        ua_email = (settings.ENRICHMENT_CONTACT_EMAIL or "").strip()
+        if ua_email:
+            ua = f"EcoOpen/1.0 (+mailto:{ua_email})"
+        else:
+            ua = "EcoOpen/1.0"
+        return {
+            "Accept": "application/json",
+            "User-Agent": ua,
+        }
+
     def lookup(self, doi: str) -> Optional[Dict[str, Any]]:
         """
         Fetch Crossref metadata for a DOI. Returns None on errors.
@@ -60,7 +71,7 @@ class DOIRegistry:
         url = f"https://api.crossref.org/works/{doi}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                resp = client.get(url, headers={"Accept": "application/json"})
+                resp = client.get(url, headers=self._headers())
             if resp.status_code != 200:
                 logger.debug("crossref_non_200 %s %s", resp.status_code, resp.text[:200])
                 return None
@@ -109,49 +120,106 @@ class DOIRegistry:
             return 0.0
         return inter / union
 
-    def search_by_title(self, title: Optional[str], rows: int = 5) -> Optional[Dict[str, Any]]:
-        """
-        Query Crossref for works matching the given title. Returns the best match
-        as a dict: { 'doi': '...', 'title': '...', 'issued_year': 2020, 'score': <similarity> }
-        or None if no suitable match.
-        """
-        if not title:
-            return None
+    def _search_crossref_by_title(self, title: str, rows: int = 5) -> Optional[Dict[str, Any]]:
         try:
-            q = title.strip()
-            if not q:
-                return None
+            params = {"query.title": title, "rows": rows}
+            # Be polite: include contact email if provided
+            if settings.ENRICHMENT_CONTACT_EMAIL:
+                params["mailto"] = settings.ENRICHMENT_CONTACT_EMAIL
             with httpx.Client(timeout=self.timeout) as client:
                 resp = client.get(
                     "https://api.crossref.org/works",
-                    headers={"Accept": "application/json"},
-                    params={"query.title": q, "rows": rows},
+                    headers=self._headers(),
+                    params=params,
                 )
             if resp.status_code != 200:
                 logger.debug("crossref_title_search_non_200 %s %s", resp.status_code, resp.text[:200])
                 return None
             data = resp.json()
-            items = (data.get('message') or {}).get('items') or []
+            items = (data.get("message") or {}).get("items") or []
             best = None
             best_sim = 0.0
             for it in items:
-                titles = it.get('title') or []
+                titles = it.get("title") or []
                 t0 = titles[0] if titles else None
-                sim = self.title_similarity(t0, q)
+                sim = self.title_similarity(t0, title)
                 if sim > best_sim:
-                    doi = it.get('DOI') or it.get('doi')
+                    doi = it.get("DOI") or it.get("doi")
                     year = None
                     try:
-                        issued = it.get('issued') or {}
-                        parts = issued.get('date-parts') or []
+                        issued = it.get("issued") or {}
+                        parts = issued.get("date-parts") or []
                         if parts and parts[0] and parts[0][0]:
                             year = int(parts[0][0])
                     except Exception:
                         year = None
                     best_sim = sim
-                    best = {"doi": doi, "title": t0, "issued_year": year, "score": sim}
+                    best = {"doi": doi, "title": t0, "issued_year": year, "score": sim, "source": "crossref"}
             return best
         except Exception as e:
             logger.debug("crossref_title_search_error %s", e)
             return None
+
+    def _search_openalex_by_title(self, title: str, rows: int = 5) -> Optional[Dict[str, Any]]:
+        try:
+            params = {"search": title, "per_page": rows}
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.get(
+                    "https://api.openalex.org/works",
+                    headers=self._headers(),
+                    params=params,
+                )
+            if resp.status_code != 200:
+                logger.debug("openalex_title_search_non_200 %s %s", resp.status_code, resp.text[:200])
+                return None
+            data = resp.json() or {}
+            items = data.get("results") or []
+            best = None
+            best_sim = 0.0
+            for it in items:
+                t0 = it.get("display_name")
+                sim = self.title_similarity(t0, title)
+                if sim > best_sim:
+                    doi_raw = it.get("doi") or ""
+                    doi = doi_raw
+                    if isinstance(doi_raw, str) and doi_raw.lower().startswith("https://doi.org/"):
+                        doi = doi_raw[len("https://doi.org/") :]
+                    year = it.get("publication_year")
+                    try:
+                        year = int(year) if year is not None else None
+                    except Exception:
+                        year = None
+                    best_sim = sim
+                    best = {"doi": doi, "title": t0, "issued_year": year, "score": sim, "source": "openalex"}
+            return best
+        except Exception as e:
+            logger.debug("openalex_title_search_error %s", e)
+            return None
+
+    def search_by_title(self, title: Optional[str], rows: int = 5) -> Optional[Dict[str, Any]]:
+        """
+        Query external registries for works matching the given title. Returns the best match
+        as a dict: { 'doi': '...', 'title': '...', 'issued_year': 2020, 'score': <similarity>, 'source': 'crossref|openalex' }
+        or None if no suitable match.
+        """
+        if not title:
+            return None
+        q = title.strip()
+        if not q:
+            return None
+        # Try Crossref first, then OpenAlex; pick the better score
+        best_cr = self._search_crossref_by_title(q, rows=rows)
+        best_oa = self._search_openalex_by_title(q, rows=rows)
+        candidates = [b for b in [best_cr, best_oa] if b and b.get("doi")]
+        if not candidates:
+            return best_cr or best_oa
+        # choose highest score; tie-breaker by configured preference
+        candidates.sort(key=lambda d: float(d.get("score", 0.0)), reverse=True)
+        top = candidates[0]
+        if len(candidates) > 1 and candidates[0].get("score") == candidates[1].get("score"):
+            preferred = (settings.DOI_TITLE_SEARCH_PREFERRED_SOURCE or "crossref").lower()
+            other = candidates[1]
+            if other.get("source") == preferred:
+                top = other
+        return top
  

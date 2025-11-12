@@ -39,9 +39,11 @@ class Settings(BaseSettings):
     EMBEDDINGS_BASE_URL: str | None = Field(default=None)
 
     # DOI verification and lookup
-    ENABLE_DOI_VERIFICATION: bool = Field(default=False)
+    ENABLE_DOI_VERIFICATION: bool = Field(default=True)
     DOI_HTTP_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
     DOI_CACHE_TTL: int = Field(default=3600, ge=0, le=24 * 3600)
+    # Which source to prefer when Crossref and OpenAlex scores tie: 'crossref' or 'openalex'
+    DOI_TITLE_SEARCH_PREFERRED_SOURCE: str = Field(default="crossref")
 
     @field_validator("EMBEDDINGS_BASE_URL", mode="before")
     @classmethod
@@ -140,7 +142,7 @@ class Settings(BaseSettings):
     # Enrichment toggles and limits
     ENABLE_TITLE_ENRICHMENT: bool = Field(default=True)
     # Prefer LLM-based title extraction and verify via Crossref when enabled
-    ENABLE_TITLE_LLM_PREFERRED: bool = Field(default=False)
+    ENABLE_TITLE_LLM_PREFERRED: bool = Field(default=True)
     ENABLE_LINK_VERIFICATION: bool = Field(default=True)
     ENRICHMENT_HTTP_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
     ENRICHMENT_MAX_CONCURRENCY: int = Field(default=10, ge=1, le=64)

@@ -683,13 +683,17 @@ class AgentRunner:
 
                 # Decide DOI based on sims
                 replaced_by_title_search = False
+                base_conf = float(confidence_scores.get("doi", 0.0))
+                strong_harvest = bool(doi and (base_conf >= 0.9))
                 if not doi and title_rec and title_rec.get("doi") and title_sim >= 0.4:
                     doi = title_rec.get("doi")
                     confidence_scores["doi"] = min(1.0, 0.6 + float(title_sim))
                     replaced_by_title_search = True
                 elif doi:
                     if not doi_rec or doi_sim < 0.2:
-                        if title_rec and title_rec.get("doi") and title_sim >= max(0.4, doi_sim + 0.15):
+                        # Only allow replacement of an existing DOI if it wasn't harvested strongly
+                        # and the title search match is clearly stronger
+                        if (not strong_harvest) and title_rec and title_rec.get("doi") and title_sim >= max(0.6, doi_sim + 0.25):
                             doi = title_rec.get("doi")
                             confidence_scores["doi"] = min(1.0, 0.55 + float(title_sim))
                             replaced_by_title_search = True

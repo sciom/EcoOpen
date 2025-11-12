@@ -139,6 +139,8 @@ class Settings(BaseSettings):
 
     # Enrichment toggles and limits
     ENABLE_TITLE_ENRICHMENT: bool = Field(default=True)
+    # Prefer LLM-based title extraction and verify via Crossref when enabled
+    ENABLE_TITLE_LLM_PREFERRED: bool = Field(default=False)
     ENABLE_LINK_VERIFICATION: bool = Field(default=True)
     ENRICHMENT_HTTP_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
     ENRICHMENT_MAX_CONCURRENCY: int = Field(default=10, ge=1, le=64)

@@ -578,25 +578,12 @@ class AgentRunner:
             if settings.EXPOSE_AVAILABILITY_DEBUG:
                 debug_info = availability.diagnostics
 
-        # Title (optionally enriched)
+        # Title: prefer LLM if configured, with heuristics/enrichment as fallback
         title_source = "heuristic"
         heuristic_title = self._heuristic_title(blocks)
-        title = heuristic_title
+        title = None
 
-        if settings.ENABLE_TITLE_ENRICHMENT:
-            try:
-                from app.services.title_resolver import TitleResolver
-                resolver = TitleResolver()
-                enriched = resolver.resolve(blocks)
-                if enriched.title:
-                    title = enriched.title
-                    title_source = enriched.source
-            except Exception:
-                # Swallow enrichment errors to avoid impacting core workflow
-                pass
-
-        if not title:
-            # Build a focused front-matter context from first-page blocks (column 0)
+        def _llm_title_from_front() -> Optional[str]:
             front_blocks: List[str] = []
             for b in blocks:
                 if b.page != 1:
@@ -607,26 +594,67 @@ class AgentRunner:
                 if txt:
                     front_blocks.append(re.sub(r"\s+", " ", txt))
             front_ctx = "\n".join(front_blocks[:6])
-            if front_ctx:
-                try:
-                    raw = self._chat(sys_title, f"Front Matter:\n{front_ctx}\n\nReturn ONLY the title or 'None'.")
-                except LLMServiceError:
-                    raw = None
-                if raw:
-                    cleaned = raw.strip()
-                    if cleaned.lower() not in {"none", "not found", "n/a", "na", ""} and 5 <= len(cleaned) <= 300:
-                        title = cleaned
-                        title_source = "llm"
-            if not title:
-                llm_title = self._extract_single(
+            if not front_ctx:
+                return None
+            try:
+                raw = self._chat(sys_title, f"Front Matter:\n{front_ctx}\n\nReturn ONLY the title or 'None'.")
+            except LLMServiceError:
+                raw = None
+            if raw:
+                cleaned = raw.strip()
+                if cleaned.lower() not in {"none", "not found", "n/a", "na", ""} and 5 <= len(cleaned) <= 300:
+                    return cleaned
+            return None
+
+        if settings.ENABLE_TITLE_LLM_PREFERRED:
+            cand = _llm_title_from_front()
+            if not cand:
+                cand = self._extract_single(
                     vs,
                     query="title abstract introduction paper study research",
                     system=sys_title,
                     label="title",
                     k=4,
                 )
-                if llm_title and (len(llm_title) >= 10 and len(llm_title) <= 300):
-                    title = llm_title
+            if cand and (10 <= len(cand) <= 300):
+                title = cand
+                title_source = "llm"
+            else:
+                # Fallback to heuristic/enrichment
+                title = heuristic_title
+                if settings.ENABLE_TITLE_ENRICHMENT:
+                    try:
+                        from app.services.title_resolver import TitleResolver
+                        resolver = TitleResolver()
+                        enriched = resolver.resolve(blocks)
+                        if enriched.title:
+                            title = enriched.title
+                            title_source = enriched.source
+                    except Exception:
+                        pass
+        else:
+            # Original order: heuristic -> enrichment -> LLM
+            title = heuristic_title
+            if settings.ENABLE_TITLE_ENRICHMENT:
+                try:
+                    from app.services.title_resolver import TitleResolver
+                    resolver = TitleResolver()
+                    enriched = resolver.resolve(blocks)
+                    if enriched.title:
+                        title = enriched.title
+                        title_source = enriched.source
+                except Exception:
+                    pass
+            if not title:
+                cand = _llm_title_from_front() or self._extract_single(
+                    vs,
+                    query="title abstract introduction paper study research",
+                    system=sys_title,
+                    label="title",
+                    k=4,
+                )
+                if cand and (10 <= len(cand) <= 300):
+                    title = cand
                     title_source = "llm"
 
         if availability.diagnostics is not None:
@@ -638,33 +666,69 @@ class AgentRunner:
             if settings.EXPOSE_AVAILABILITY_DEBUG:
                 debug_info = availability.diagnostics
 
-        # Optional DOI verification with Crossref after title is known
-        if settings.ENABLE_DOI_VERIFICATION and doi:
+        # Crossref-based verification and reconciliation using title and DOI
+        if settings.ENABLE_DOI_VERIFICATION and (title or heuristic_title):
             try:
                 from app.services.doi_registry import DOIRegistry
                 reg = DOIRegistry()
-                rec = reg.lookup(doi)
-                sim = reg.title_similarity(rec.get("title") if rec else None, title or heuristic_title)
-                base_conf = float(confidence_scores.get("doi", 0.5))
-                if rec and sim >= 0.2:
-                    confidence_scores["doi"] = min(1.0, max(base_conf, base_conf + 0.2 + float(sim)))
-                elif rec:
-                    confidence_scores["doi"] = min(1.0, max(base_conf * 0.8, base_conf))
-                else:
-                    confidence_scores["doi"] = max(base_conf * 0.7, 0.3)
+                title_text = title or heuristic_title
+
+                # Title search: may provide a DOI candidate
+                title_rec = reg.search_by_title(title_text)
+                title_sim = reg.title_similarity(title_rec.get("title") if title_rec else None, title_text)
+
+                # Existing DOI verification, if any
+                doi_rec = reg.lookup(doi) if doi else None
+                doi_sim = reg.title_similarity(doi_rec.get("title") if doi_rec else None, title_text)
+
+                # Decide DOI based on sims
+                replaced_by_title_search = False
+                if not doi and title_rec and title_rec.get("doi") and title_sim >= 0.4:
+                    doi = title_rec.get("doi")
+                    confidence_scores["doi"] = min(1.0, 0.6 + float(title_sim))
+                    replaced_by_title_search = True
+                elif doi:
+                    if not doi_rec or doi_sim < 0.2:
+                        if title_rec and title_rec.get("doi") and title_sim >= max(0.4, doi_sim + 0.15):
+                            doi = title_rec.get("doi")
+                            confidence_scores["doi"] = min(1.0, 0.55 + float(title_sim))
+                            replaced_by_title_search = True
+                        else:
+                            base_conf = float(confidence_scores.get("doi", 0.5))
+                            confidence_scores["doi"] = max(base_conf * 0.7, 0.3)
+                    else:
+                        base_conf = float(confidence_scores.get("doi", 0.5))
+                        confidence_scores["doi"] = min(1.0, max(base_conf, base_conf + 0.2 + float(doi_sim)))
+
                 if availability.diagnostics is not None:
                     dd = availability.diagnostics.get("doi_debug")
                     if not isinstance(dd, dict):
                         dd = {}
-                    verified = bool(rec and (sim is not None) and sim >= 0.2)
                     dd["verification"] = {
-                        "registry_record": rec,
-                        "title_similarity": sim,
-                        "verified": verified,
+                        "registry_record": doi_rec,
+                        "title_similarity": doi_sim,
+                        "verified": bool(doi_rec and doi_sim >= 0.2),
+                    }
+                    dd["title_search"] = {
+                        "record": title_rec,
+                        "title_similarity": title_sim,
+                        "used": replaced_by_title_search,
                     }
                     availability.diagnostics["doi_debug"] = dd
-                    if settings.EXPOSE_AVAILABILITY_DEBUG:
-                        debug_info = availability.diagnostics
+
+                if availability.diagnostics is not None:
+                    td = availability.diagnostics.get("title_debug")
+                    if not isinstance(td, dict):
+                        td = {}
+                    td["title_verification"] = {
+                        "search_record": title_rec,
+                        "similarity": title_sim,
+                        "verified": bool(title_rec and title_sim >= 0.4),
+                    }
+                    availability.diagnostics["title_debug"] = td
+
+                if settings.EXPOSE_AVAILABILITY_DEBUG:
+                    debug_info = availability.diagnostics
             except Exception:
                 pass
 

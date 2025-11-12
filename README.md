@@ -82,7 +82,8 @@ For batch processing and CSV export, run MongoDB and use the UI or `POST /analyz
 ## Enrichment & Debug
 - `ENABLE_TITLE_ENRICHMENT` (default: true): improves title detection by merging first-page lines; no network.
 - `ENABLE_LINK_VERIFICATION` (default: true): normalizes and deduplicates links; no network.
-- `ENABLE_DOI_VERIFICATION` (default: false): verifies extracted DOI against Crossref and adjusts confidence using title similarity. Optional knobs: `DOI_HTTP_TIMEOUT_SECONDS` and `DOI_CACHE_TTL`.
+- `ENABLE_DOI_VERIFICATION` (default: false): verifies extracted DOI against Crossref and adjusts confidence using title similarity. If no DOI is present or verification fails, a title-based Crossref search can supply a DOI that matches the extracted title. Knobs: `DOI_HTTP_TIMEOUT_SECONDS`, `DOI_CACHE_TTL`.
+- `ENABLE_TITLE_LLM_PREFERRED` (default: false): prefer LLM-based title extraction over heuristic; when DOI verification is enabled, the title is checked against Crossref and can drive DOI reconciliation.
 - Optional knobs: `ENRICHMENT_HTTP_TIMEOUT_SECONDS`, `ENRICHMENT_MAX_CONCURRENCY`, `ENRICHMENT_CONTACT_EMAIL` (reserved for future network enrichers).
 - To include detailed extraction diagnostics in API responses, set `EXPOSE_AVAILABILITY_DEBUG=true`.
  

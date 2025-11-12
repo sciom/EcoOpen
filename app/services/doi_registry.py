@@ -13,6 +13,7 @@ class DOIRegistry:
     """
     Minimal Crossref-backed DOI lookup with simple in-memory cache.
     Used to verify DOI existence and fetch title metadata for similarity checks.
+    Also supports title-based search to find candidate DOIs.
     """
 
     _cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
@@ -107,3 +108,50 @@ class DOIRegistry:
         if union == 0:
             return 0.0
         return inter / union
+
+    def search_by_title(self, title: Optional[str], rows: int = 5) -> Optional[Dict[str, Any]]:
+        """
+        Query Crossref for works matching the given title. Returns the best match
+        as a dict: { 'doi': '...', 'title': '...', 'issued_year': 2020, 'score': <similarity> }
+        or None if no suitable match.
+        """
+        if not title:
+            return None
+        try:
+            q = title.strip()
+            if not q:
+                return None
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.get(
+                    "https://api.crossref.org/works",
+                    headers={"Accept": "application/json"},
+                    params={"query.title": q, "rows": rows},
+                )
+            if resp.status_code != 200:
+                logger.debug("crossref_title_search_non_200 %s %s", resp.status_code, resp.text[:200])
+                return None
+            data = resp.json()
+            items = (data.get('message') or {}).get('items') or []
+            best = None
+            best_sim = 0.0
+            for it in items:
+                titles = it.get('title') or []
+                t0 = titles[0] if titles else None
+                sim = self.title_similarity(t0, q)
+                if sim > best_sim:
+                    doi = it.get('DOI') or it.get('doi')
+                    year = None
+                    try:
+                        issued = it.get('issued') or {}
+                        parts = issued.get('date-parts') or []
+                        if parts and parts[0] and parts[0][0]:
+                            year = int(parts[0][0])
+                    except Exception:
+                        year = None
+                    best_sim = sim
+                    best = {"doi": doi, "title": t0, "issued_year": year, "score": sim}
+            return best
+        except Exception as e:
+            logger.debug("crossref_title_search_error %s", e)
+            return None
+ 

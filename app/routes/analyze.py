@@ -100,6 +100,7 @@ def _to_result_model(analysis: dict, source_file: str) -> PDFAnalysisResultModel
         data_links=analysis.get("data_links") or [],
         code_links=analysis.get("code_links") or [],
         confidence_scores=analysis.get("confidence_scores") or {},
+        title_source=analysis.get("title_source"),
         source_file=source_file,
     )
 
@@ -231,6 +232,7 @@ async def analyze(file: UploadFile = File(...),
         try:
             await set_document_analysis(doc_id, {
                 "title": model_res.title,
+                "title_source": getattr(model_res, "title_source", None),
                 "doi": model_res.doi,
                 "data_availability_statement": model_res.data_availability_statement,
                 "code_availability_statement": model_res.code_availability_statement,

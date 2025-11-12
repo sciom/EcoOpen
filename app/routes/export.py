@@ -58,6 +58,7 @@ async def export_csv(job_id: str, user: dict = Depends(_get_current_user)):
         "source_file",
         "filename",
         "title",
+        "title_source",
         "doi",
         "doi_from_title_search",
         "data_availability_statement",
@@ -83,6 +84,7 @@ async def export_csv(job_id: str, user: dict = Depends(_get_current_user)):
                 "source_file": filename,
                 "filename": filename.split("/")[-1],
                 "title": analysis.get("title") or "",
+                "title_source": analysis.get("title_source") or "",
                 "doi": analysis.get("doi") or "",
                 "doi_from_title_search": "",  # optional enrichment could be added server-side
                 "data_availability_statement": analysis.get("data_availability_statement") or "",

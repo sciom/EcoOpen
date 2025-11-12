@@ -63,7 +63,7 @@
 
         <div v-if="result.title" class="result-item">
           <h4><i class="fas fa-heading"></i> Title</h4>
-          <p class="paper-title">{{ result.title }}</p>
+          <p class="paper-title">{{ result.title }} <span v-if="result.title_source" class="title-source">(source: {{ result.title_source }})</span></p>
         </div>
 
         <div v-if="result.doi" class="result-item">
@@ -584,6 +584,8 @@ async function onSubmit() {
   margin: 0;
   font-family: 'Courier New', monospace;
 }
+
+.title-source { font-size: 0.85rem; color: #4a5568; font-style: italic; }
 
 @keyframes slideUp {
   from {

@@ -75,10 +75,17 @@ curl -sS -X POST \
   "http://localhost:8000/analyze?mode=sync"
 ```
 
-Response includes `title`, `doi`, availability statements, and normalized `data_links`/`code_links`.
-
+Response includes `title`, `title_source` (origin of extracted title: heuristic|llm|enriched), `doi`, availability statements, and normalized `data_links`/`code_links`.
+ 
 For batch processing and CSV export, run MongoDB and use the UI or `POST /analyze/batch`.
-
+ 
+## Enrichment & Debug
+- `ENABLE_TITLE_ENRICHMENT` (default: true): improves title detection by merging first-page lines; no network.
+- `ENABLE_LINK_VERIFICATION` (default: true): normalizes and deduplicates links; no network.
+- `ENABLE_DOI_VERIFICATION` (default: false): verifies extracted DOI against Crossref and adjusts confidence using title similarity. Optional knobs: `DOI_HTTP_TIMEOUT_SECONDS` and `DOI_CACHE_TTL`.
+- Optional knobs: `ENRICHMENT_HTTP_TIMEOUT_SECONDS`, `ENRICHMENT_MAX_CONCURRENCY`, `ENRICHMENT_CONTACT_EMAIL` (reserved for future network enrichers).
+- To include detailed extraction diagnostics in API responses, set `EXPOSE_AVAILABILITY_DEBUG=true`.
+ 
 ## Testing
 Run the test suite to verify functionality:
 ```bash

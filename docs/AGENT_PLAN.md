@@ -47,7 +47,7 @@
 - `Problem`: `code`, `message`, `details?`, `trace_id`.
 
 ## CSV Schema
-- Columns: `source_file, filename, title, doi, doi_from_title_search, data_availability_statement, code_availability_statement, data_sharing_license, code_license, data_links_count, code_links_count, data_links, code_links, error`.
+- Columns: `source_file, filename, title, title_source, doi, doi_from_title_search, data_availability_statement, code_availability_statement, data_sharing_license, code_license, data_links_count, code_links_count, data_links, code_links, error`.
 - Values: explicit-only. Missing values are empty (no guesses).
 
 ## Anti-Hallucination Controls

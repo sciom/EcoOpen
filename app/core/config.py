@@ -6,6 +6,9 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    def __init__(self, **values):
+        values.pop("_env_file", None)
+        super().__init__(**values)
     # pydantic-settings v2 configuration
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -34,6 +37,11 @@ class Settings(BaseSettings):
     # Embedding model when using AGENT endpoint
     AGENT_EMBED_MODEL: str = Field(default="text-embedding-3-small")
     EMBEDDINGS_BASE_URL: str | None = Field(default=None)
+
+    # DOI verification and lookup
+    ENABLE_DOI_VERIFICATION: bool = Field(default=False)
+    DOI_HTTP_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
+    DOI_CACHE_TTL: int = Field(default=3600, ge=0, le=24 * 3600)
 
     @field_validator("EMBEDDINGS_BASE_URL", mode="before")
     @classmethod
@@ -128,6 +136,14 @@ class Settings(BaseSettings):
         ]
     )
     EXPOSE_AVAILABILITY_DEBUG: bool = Field(default=False)
+
+    # Enrichment toggles and limits
+    ENABLE_TITLE_ENRICHMENT: bool = Field(default=True)
+    ENABLE_LINK_VERIFICATION: bool = Field(default=True)
+    ENRICHMENT_HTTP_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
+    ENRICHMENT_MAX_CONCURRENCY: int = Field(default=10, ge=1, le=64)
+    ENRICHMENT_CONTACT_EMAIL: Optional[str] = Field(default=None)
+
 
     # --- Validators / Normalizers ---
     @field_validator("AGENT_BASE_URL", mode="before")

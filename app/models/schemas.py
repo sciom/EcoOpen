@@ -13,6 +13,7 @@ class PDFAnalysisResultModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: Optional[str] = None
+    title_source: Optional[str] = None
     doi: Optional[str] = None
     data_availability_statement: Optional[str] = None
     code_availability_statement: Optional[str] = None

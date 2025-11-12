@@ -185,6 +185,22 @@ function friendlyErrorText(status, rawText) {
 }
 
 
+export async function analyzeSingle(file) {
+  const base = getApiBase()
+  const fd = new FormData()
+  fd.append('file', file)
+  const r = await fetch(`${base}/analyze?mode=auto`, { method: 'POST', body: fd, headers: { ...authHeaders() } })
+  if (r.status === 401) {
+    logout()
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
+  }
+  if (!r.ok) {
+    const t = await r.text().catch(() => '')
+    throw new Error(friendlyErrorText(r.status, t))
+  }
+  return r.json()
+}
+
 export async function analyzeBatch(files) {
   const base = getApiBase()
   const fd = new FormData()

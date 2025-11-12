@@ -131,7 +131,7 @@
 
             <div v-else class="result-content">
               <div v-if="r.title" class="result-field">
-                <strong>Title:</strong> {{ r.title }}
+                <strong>Title:</strong> {{ r.title }}<span v-if="r.title_source"> (source: {{ r.title_source }})</span>
               </div>
 
               <div v-if="r.doi" class="result-field">

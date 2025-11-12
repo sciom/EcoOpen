@@ -164,7 +164,7 @@
               </div>
               <div v-if="r.error" class="result-error">{{ r.error }}</div>
               <div v-else class="result-fields">
-                <div v-if="r.title" class="field"><strong>Title:</strong> {{ r.title }}</div>
+                <div v-if="r.title" class="field"><strong>Title:</strong> {{ r.title }}<span v-if="r.title_source"> (source: {{ r.title_source }})</span></div>
                 <div v-if="r.doi" class="field"><strong>DOI:</strong> <a :href="doiHref(r.doi)" target="_blank" rel="noopener" class="doi-link">{{ r.doi }} <i class="fas fa-external-link-alt"></i></a></div>
                 <div v-if="r.data_availability_statement" class="field"><strong>Data Availability:</strong> {{ r.data_availability_statement }}</div>
                 <div v-if="r.code_availability_statement" class="field"><strong>Code Availability:</strong> {{ r.code_availability_statement }}</div>

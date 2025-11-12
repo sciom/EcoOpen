@@ -293,6 +293,10 @@ class AgentRunner:
         return result
 
     def _heuristic_title(self, blocks: Sequence[ParagraphBlock]) -> Optional[str]:
+        stopword_pattern = re.compile(
+            r"\b(abstract|introduction|copyright|doi|license|keywords|data availability|authors|affiliations|received|accepted)\b",
+            flags=re.IGNORECASE,
+        )
         for block in blocks:
             if block.page > 1:
                 break
@@ -302,13 +306,12 @@ class AgentRunner:
             candidate = re.sub(r"\s+", " ", candidate)
             if not candidate or candidate.endswith(":"):
                 continue
-            if len(candidate) < 12 or len(candidate) > 180:
+            if len(candidate) < 8 or len(candidate) > 200:
                 continue
             words = candidate.split()
-            if len(words) < 3 or len(words) > 25:
+            if len(words) < 2 or len(words) > 35:
                 continue
-            lower = candidate.lower()
-            if any(stop in lower for stop in ("abstract", "introduction", "copyright", "doi", "license", "keywords", "data availability", "authors", "affiliations", "received", "accepted")):
+            if stopword_pattern.search(candidate):
                 continue
             if sum(1 for ch in candidate if ch.isalpha()) < 0.5 * len(candidate):
                 continue
@@ -460,17 +463,64 @@ class AgentRunner:
         confidence_scores: Dict[str, float] = dict(availability.confidence_scores)
         debug_info = availability.diagnostics if settings.EXPOSE_AVAILABILITY_DEBUG else None
 
-        # DOI: deterministic front-matter first, then LLM fallback
+        # DOI: harvest candidates from front matter with heuristic scoring
         doi = None
-        # Limit search to front matter before References/Bibliography and to first ~20k chars
+        doi_candidates: List[str] = []
         refs_match = re.search(r"(?im)^\s*(references|bibliography)\b", normalized)
-        search_zone = normalized[: refs_match.start()] if refs_match else normalized
-        search_zone = search_zone[:20000]
-        m = re.search(
-            r"(?:doi:\s*)?(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s\"<>]+)", search_zone, flags=re.IGNORECASE
-        )
-        if m:
-            doi = validate_doi(m.group(1))
+        front_matter = normalized[: refs_match.start()] if refs_match else normalized
+        front_matter = front_matter[:20000]
+
+        doi_patterns = [
+            r"(?:doi:\s*)?(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s\"<>]+)",
+            r"10\.\d{4,9}/[^\s\"<>]+",
+        ]
+        for pat in doi_patterns:
+            for m in re.finditer(pat, front_matter, flags=re.IGNORECASE):
+                grp = m.group(1) if m.lastindex else m.group(0)
+                val = validate_doi(grp)
+                if val:
+                    doi_candidates.append(val)
+        if not doi_candidates:
+            for pat in doi_patterns:
+                for m in re.finditer(pat, normalized, flags=re.IGNORECASE):
+                    grp = m.group(1) if m.lastindex else m.group(0)
+                    val = validate_doi(grp)
+                    if val:
+                        doi_candidates.append(val)
+        # Deduplicate preserve order
+        seen_d = set()
+        ordered_candidates: List[str] = []
+        for c in doi_candidates:
+            if c not in seen_d:
+                seen_d.add(c)
+                ordered_candidates.append(c)
+
+        # Score candidates
+        candidate_scores: Dict[str, float] = {}
+        candidate_pos: Dict[str, int] = {}
+        for c in ordered_candidates:
+            pos = front_matter.find(c)
+            if pos < 0:
+                pos = normalized.find(c)
+            base = 1.0 if 0 <= pos < 5000 else 0.6
+            ctx = normalized[max(0, pos - 30): pos + len(c) + 30] if pos >= 0 else ""
+            boost = 0.0
+            if re.search(r"doi:\s*" + re.escape(c), ctx, flags=re.IGNORECASE):
+                boost += 0.4
+            if re.search(r"https?://(?:dx\.)?doi\.org/" + re.escape(c), ctx, flags=re.IGNORECASE):
+                boost += 0.3
+            score = round(base + boost, 3)
+            candidate_scores[c] = float(score)
+            candidate_pos[c] = int(pos)
+
+        # Select preliminary DOI by score
+        doi_prelim = None
+        if candidate_scores:
+            doi_prelim = max(candidate_scores.keys(), key=lambda k: candidate_scores[k])
+            doi = doi_prelim
+            confidence_scores["doi"] = min(1.0, float(candidate_scores[doi_prelim]))
+
+        # If still no DOI, LLM fallback with hallucination guard
         if not doi:
             doi_ctx = self._similarity_context_multi(
                 vs,
@@ -490,9 +540,12 @@ class AgentRunner:
                 except LLMServiceError as exc:
                     logger.warning("doi_chat_failed: %s", exc)
                     doi_raw = None
-                doi = self._validate_doi(doi_raw) if doi_raw else None
+                cand = self._validate_doi(doi_raw) if doi_raw else None
+                if cand and cand in normalized:
+                    doi = cand
+                    confidence_scores["doi"] = 0.5
         if not doi:
-            # Final regex sweep over the whole document
+            # Final regex sweep
             for pat in [
                 r"10\.\d{4,9}/[^\s\"<>]+",
                 r"doi:\s*(10\.\d{4,9}/[^\s\"<>]+)",
@@ -501,25 +554,81 @@ class AgentRunner:
                 m2 = re.search(pat, normalized, flags=re.IGNORECASE)
                 if m2:
                     grp = m2.group(1) if m2.lastindex else m2.group(0)
-                    doi = validate_doi(grp)
-                    if doi:
+                    cand = validate_doi(grp)
+                    if cand:
+                        doi = cand
+                        confidence_scores["doi"] = max(confidence_scores.get("doi", 0.4), 0.45)
                         break
 
-        # Title
-        title = self._heuristic_title(blocks)
+        # Prepare DOI diagnostics (verification added after title resolution)
+        scored_list = [
+            {"value": c, "pos": candidate_pos.get(c, -1), "score": candidate_scores.get(c, 0.0)}
+            for c in ordered_candidates
+        ]
+        scored_list.sort(key=lambda d: float(d.get("score", 0.0)), reverse=True)
+        doi_selected_score = candidate_scores.get(doi, 0.0) if doi else 0.0
+        doi_verification_meta = None
+        if availability.diagnostics is not None:
+            availability.diagnostics["doi_debug"] = {
+                "candidates": ordered_candidates,
+                "scored": scored_list,
+                "selected": doi,
+                "prelim_score": doi_selected_score,
+            }
+            if settings.EXPOSE_AVAILABILITY_DEBUG:
+                debug_info = availability.diagnostics
+
+        # Title (optionally enriched)
         title_source = "heuristic"
-        heuristic_title = title
+        heuristic_title = self._heuristic_title(blocks)
+        title = heuristic_title
+
+        if settings.ENABLE_TITLE_ENRICHMENT:
+            try:
+                from app.services.title_resolver import TitleResolver
+                resolver = TitleResolver()
+                enriched = resolver.resolve(blocks)
+                if enriched.title:
+                    title = enriched.title
+                    title_source = enriched.source
+            except Exception:
+                # Swallow enrichment errors to avoid impacting core workflow
+                pass
+
         if not title:
-            title = self._extract_single(
-                vs,
-                query="title abstract introduction paper study research",
-                system=sys_title,
-                label="title",
-                k=4,
-            )
-            if title and (len(title) < 10 or len(title) > 300):
-                title = None
-            title_source = "llm"
+            # Build a focused front-matter context from first-page blocks (column 0)
+            front_blocks: List[str] = []
+            for b in blocks:
+                if b.page != 1:
+                    break
+                if b.column != 0:
+                    continue
+                txt = (b.text or '').strip()
+                if txt:
+                    front_blocks.append(re.sub(r"\s+", " ", txt))
+            front_ctx = "\n".join(front_blocks[:6])
+            if front_ctx:
+                try:
+                    raw = self._chat(sys_title, f"Front Matter:\n{front_ctx}\n\nReturn ONLY the title or 'None'.")
+                except LLMServiceError:
+                    raw = None
+                if raw:
+                    cleaned = raw.strip()
+                    if cleaned.lower() not in {"none", "not found", "n/a", "na", ""} and 5 <= len(cleaned) <= 300:
+                        title = cleaned
+                        title_source = "llm"
+            if not title:
+                llm_title = self._extract_single(
+                    vs,
+                    query="title abstract introduction paper study research",
+                    system=sys_title,
+                    label="title",
+                    k=4,
+                )
+                if llm_title and (len(llm_title) >= 10 and len(llm_title) <= 300):
+                    title = llm_title
+                    title_source = "llm"
+
         if availability.diagnostics is not None:
             availability.diagnostics["title_debug"] = {
                 "heuristic": heuristic_title,
@@ -528,6 +637,36 @@ class AgentRunner:
             }
             if settings.EXPOSE_AVAILABILITY_DEBUG:
                 debug_info = availability.diagnostics
+
+        # Optional DOI verification with Crossref after title is known
+        if settings.ENABLE_DOI_VERIFICATION and doi:
+            try:
+                from app.services.doi_registry import DOIRegistry
+                reg = DOIRegistry()
+                rec = reg.lookup(doi)
+                sim = reg.title_similarity(rec.get("title") if rec else None, title or heuristic_title)
+                base_conf = float(confidence_scores.get("doi", 0.5))
+                if rec and sim >= 0.2:
+                    confidence_scores["doi"] = min(1.0, max(base_conf, base_conf + 0.2 + float(sim)))
+                elif rec:
+                    confidence_scores["doi"] = min(1.0, max(base_conf * 0.8, base_conf))
+                else:
+                    confidence_scores["doi"] = max(base_conf * 0.7, 0.3)
+                if availability.diagnostics is not None:
+                    dd = availability.diagnostics.get("doi_debug")
+                    if not isinstance(dd, dict):
+                        dd = {}
+                    verified = bool(rec and (sim is not None) and sim >= 0.2)
+                    dd["verification"] = {
+                        "registry_record": rec,
+                        "title_similarity": sim,
+                        "verified": verified,
+                    }
+                    availability.diagnostics["doi_debug"] = dd
+                    if settings.EXPOSE_AVAILABILITY_DEBUG:
+                        debug_info = availability.diagnostics
+            except Exception:
+                pass
 
         # Licenses
         data_license = self._extract_single(
@@ -550,8 +689,43 @@ class AgentRunner:
         if code_license and len(code_license) < 5:
             code_license = None
 
+        # Optional link verification/normalization (non-network)
+        if settings.ENABLE_LINK_VERIFICATION:
+            try:
+                from app.services.link_inspector import LinkInspector
+
+                insp = LinkInspector()
+
+                def _sanitize(urls: Optional[List[str]]) -> List[str]:
+                    infos = insp.inspect(urls or [])
+                    return [i.url for i in infos]
+
+                data_links = _sanitize(data_links)
+                code_links = _sanitize(code_links)
+
+                if availability.diagnostics is not None:
+                    availability.diagnostics["link_verification"] = {
+                        "enabled": True,
+                        "data_links": data_links,
+                        "code_links": code_links,
+                    }
+                    if settings.EXPOSE_AVAILABILITY_DEBUG:
+                        debug_info = availability.diagnostics
+            except Exception:
+                # Never fail the core workflow due to enrichment
+                pass
+
+        diag = availability.diagnostics if isinstance(availability.diagnostics, dict) else None
+        title_src = None
+        if title and isinstance(diag, dict):
+            td = diag.get("title_debug")
+            if isinstance(td, dict):
+                src = td.get("source")
+                if isinstance(src, str):
+                    title_src = src
         return PDFAnalysisResultModel(
             title=title,
+            title_source=title_src,
             doi=doi,
             data_availability_statement=data_stmt,
             code_availability_statement=code_stmt,

@@ -297,6 +297,12 @@ class AgentRunner:
             r"\b(abstract|introduction|copyright|doi|license|keywords|data availability|authors|affiliations|received|accepted)\b",
             flags=re.IGNORECASE,
         )
+        # Additional pattern to detect journal headers that should be skipped
+        journal_header_pattern = re.compile(
+            r"^[a-zA-Z\s]+\(\d{4}\)\s+\d+,\s+\d+-\d+$",
+            flags=re.IGNORECASE,
+        )
+        
         for block in blocks:
             if block.page > 1:
                 break
@@ -304,16 +310,24 @@ class AgentRunner:
                 continue
             candidate = self._normalize_text(block.text).strip()
             candidate = re.sub(r"\s+", " ", candidate)
+            
+            # Skip journal headers (e.g., "Molecular Ecology (2000) 9, 1319-1324")
+            if journal_header_pattern.match(candidate):
+                continue
+                
             if not candidate or candidate.endswith(":"):
                 continue
-            if len(candidate) < 8 or len(candidate) > 200:
+            # Relax length constraints slightly for journal headers
+            if len(candidate) < 8 or len(candidate) > 250:
                 continue
             words = candidate.split()
-            if len(words) < 2 or len(words) > 35:
+            if len(words) < 2 or len(words) > 40:
                 continue
             if stopword_pattern.search(candidate):
                 continue
-            if sum(1 for ch in candidate if ch.isalpha()) < 0.5 * len(candidate):
+            # Relax alpha ratio for citations and journal headers
+            alpha_ratio = sum(1 for ch in candidate if ch.isalpha()) / len(candidate)
+            if alpha_ratio < 0.4:  # Reduced from 0.5
                 continue
             return candidate
         return None
@@ -441,6 +455,8 @@ class AgentRunner:
             "You are an expert at identifying scientific paper titles. "
             "Look for the main title which is usually the most prominent heading at the beginning. "
             "Extract ONLY the main title, not subtitles, author names, or journal names. "
+            "Ignore journal headers like 'Molecular Ecology (2000) 9, 1319-1324'. "
+            "The title is typically descriptive of the research content. "
             "If no clear title is found, respond with exactly: 'None'"
         )
         sys_data_license = "Extract ONLY explicit data sharing license text if present.\n" "Return 'None' if absent."
@@ -479,6 +495,9 @@ class AgentRunner:
                 grp = m.group(1) if m.lastindex else m.group(0)
                 val = validate_doi(grp)
                 if val:
+                    # Avoid dataset DOIs (zenodo/dryad/osf) being mistaken as article DOI
+                    if any(val.startswith(p + "/") for p in settings.DATA_LINK_DATASET_DOI_PREFIXES):
+                        continue
                     doi_candidates.append(val)
         if not doi_candidates:
             for pat in doi_patterns:
@@ -486,6 +505,8 @@ class AgentRunner:
                     grp = m.group(1) if m.lastindex else m.group(0)
                     val = validate_doi(grp)
                     if val:
+                        if any(val.startswith(p + "/") for p in settings.DATA_LINK_DATASET_DOI_PREFIXES):
+                            continue
                         doi_candidates.append(val)
         # Deduplicate preserve order
         seen_d = set()
@@ -555,7 +576,7 @@ class AgentRunner:
                 if m2:
                     grp = m2.group(1) if m2.lastindex else m2.group(0)
                     cand = validate_doi(grp)
-                    if cand:
+                    if cand and not any(cand.startswith(p + "/") for p in settings.DATA_LINK_DATASET_DOI_PREFIXES):
                         doi = cand
                         confidence_scores["doi"] = max(confidence_scores.get("doi", 0.4), 0.45)
                         break
@@ -582,6 +603,9 @@ class AgentRunner:
         title_source = "heuristic"
         heuristic_title = self._heuristic_title(blocks)
         title = None
+        
+        # Debug: Log heuristic title extraction
+        logger.debug(f"Heuristic title extracted: '{heuristic_title}' from {len(blocks)} blocks")
 
         def _llm_title_from_front() -> Optional[str]:
             front_blocks: List[str] = []
@@ -597,9 +621,16 @@ class AgentRunner:
             if not front_ctx:
                 return None
             try:
-                raw = self._chat(sys_title, f"Front Matter:\n{front_ctx}\n\nReturn ONLY the title or 'None'.")
+                enhanced_prompt = f"Front Matter (first page):\n{front_ctx}\n\n"
+                enhanced_prompt += "Note: Journal headers like 'Journal Name (Year) Volume, Pages' are NOT titles. "
+                enhanced_prompt += "Look for the actual research title that describes the study content.\n\n"
+                enhanced_prompt += "Return ONLY the title or 'None'."
+                logger.debug(f"LLM title extraction prompt: {enhanced_prompt[:200]}...")
+                raw = self._chat(sys_title, enhanced_prompt)
+                logger.debug(f"LLM title raw response: '{raw}'")
             except LLMServiceError:
                 raw = None
+                logger.debug("LLM title extraction failed with LLMServiceError")
             if raw:
                 cleaned = raw.strip()
                 if cleaned.lower() not in {"none", "not found", "n/a", "na", ""} and 5 <= len(cleaned) <= 300:
@@ -791,12 +822,35 @@ class AgentRunner:
                 src = td.get("source")
                 if isinstance(src, str):
                     title_src = src
+        # Availability status derivation
+        def _status_from(statement: Optional[str], links: List[str], kind: str) -> Optional[str]:
+            if not statement:
+                return "none"
+            s = statement.lower()
+            if any(phrase in s for phrase in ["will be available", "will be made available", "will become available"]):
+                return "future"
+            if any(phrase in s for phrase in ["upon request", "available upon request", "reasonable request", "from the corresponding author", "available from the corresponding author"]):
+                return "restricted"
+            if kind == "data" and any(p in s for p in ["in the paper", "in the article", "within the article", "in the supplementary", "in the supplement", "supplementary material", "supporting information only"]):
+                # Only treat as embedded if there are no external links
+                if not links:
+                    return "embedded"
+            if links:
+                return "open"
+            # Fallback
+            return "none"
+
+        data_status = _status_from(data_stmt, data_links, "data")
+        code_status = _status_from(code_stmt, code_links, "code")
+
         return PDFAnalysisResultModel(
             title=title,
             title_source=title_src,
             doi=doi,
             data_availability_statement=data_stmt,
             code_availability_statement=code_stmt,
+            data_availability_status=data_status,
+            code_availability_status=code_status,
             data_sharing_license=data_license,
             code_license=code_license,
             data_links=data_links,

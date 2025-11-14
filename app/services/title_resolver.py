@@ -31,22 +31,29 @@ class TitleResolver:
 
     def _is_bad(self, s: str) -> bool:
         l = s.lower()
-        if not s or len(s) < 8 or len(s) > 240:
+        if not s or len(s) < 8 or len(s) > 280:  # Increased max length
             return True
         # use whole-word stopword matching to avoid false positives
         if re.search(r"\b(abstract|introduction|copyright|license|doi|keywords)\b", l):
             return True
+        # Skip journal headers (e.g., "Molecular Ecology (2000) 9, 1319-1324")
+        if re.search(r"^[a-zA-Z\s]+\(\d{4}\)\s+\d+,\s+\d+-\d+$", l):
+            return True
         words = s.split()
-        if len(words) < 2 or len(words) > 45:
+        if len(words) < 2 or len(words) > 50:  # Increased max words
             return True
         letters = sum(1 for ch in s if ch.isalpha())
-        if letters < 0.5 * len(s):
+        # Relax alpha ratio for citations and journal headers
+        if letters < 0.4 * len(s):  # Reduced from 0.5
             return True
         return False
 
     def _merge_first_page(self, blocks: Sequence[ParagraphBlock]) -> List[str]:
         lines: List[str] = []
         cue_re = re.compile(r"\b(author|affiliation|department|correspondence|university|institute)\b", re.IGNORECASE)
+        # Pattern to detect journal headers that should be skipped
+        journal_header_re = re.compile(r"^[a-zA-Z\s]+\(\d{4}\)\s+\d+,\s+\d+-\d+$", re.IGNORECASE)
+        
         for b in blocks:
             if b.page != 1:
                 break
@@ -56,12 +63,20 @@ class TitleResolver:
             if not text:
                 continue
             low = text.lower()
+            
+            # Skip journal headers entirely
+            if journal_header_re.match(text):
+                continue
+                
             # If we've already collected some lines, stop on affiliation cues
             if lines and cue_re.search(low):
                 break
             for ln in text.split("\n"):
                 ln = ln.strip()
                 if not ln:
+                    continue
+                # Skip journal header lines
+                if journal_header_re.match(ln):
                     continue
                 # stop if a line itself looks like affiliation/author
                 if cue_re.search(ln):

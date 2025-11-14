@@ -37,9 +37,48 @@
         >
           <i v-if="loading" class="fas fa-spinner fa-spin"></i>
           <i v-else class="fas fa-search"></i>
-          {{ loading ? 'Analyzing...' : (authed ? 'Analyze PDF' : 'Login to Analyze') }}
+          {{ getButtonText() }}
         </button>
       </form>
+    </div>
+
+    <!-- Upload Progress -->
+    <div v-if="loading && uploadProgress > 0" class="upload-progress">
+      <div class="progress-header">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <span>Uploading Document</span>
+        <span class="progress-percentage">{{ uploadProgress }}%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="{width: uploadProgress + '%'}"></div>
+      </div>
+      <div class="progress-status">{{ uploadStatus }}</div>
+    </div>
+
+    <!-- Processing Progress -->
+    <div v-if="loading && uploadProgress === 100" class="processing-progress">
+      <div class="processing-header">
+        <i class="fas fa-brain"></i>
+        <span>Processing Document</span>
+      </div>
+      <div class="processing-stages">
+        <div class="stage" :class="{ active: processingStage >= 1, completed: processingStage > 1 }">
+          <i class="fas fa-file-pdf"></i>
+          <span>Extracting Text</span>
+        </div>
+        <div class="stage" :class="{ active: processingStage >= 2, completed: processingStage > 2 }">
+          <i class="fas fa-search"></i>
+          <span>Analyzing Content</span>
+        </div>
+        <div class="stage" :class="{ active: processingStage >= 3, completed: processingStage > 3 }">
+          <i class="fas fa-link"></i>
+          <span>Finding Links</span>
+        </div>
+        <div class="stage" :class="{ active: processingStage >= 4 }">
+          <i class="fas fa-check-circle"></i>
+          <span>Finalizing Results</span>
+        </div>
+      </div>
     </div>
 
     <div v-if="error" class="error-message">
@@ -156,6 +195,11 @@ const error = ref('')
 const result = ref(null)
 const authed = ref(isAuthenticated())
 
+// Progress tracking
+const uploadProgress = ref(0)
+const uploadStatus = ref('')
+const processingStage = ref(0)
+
 function updateAuthed() { authed.value = isAuthenticated() }
 
 onMounted(() => {
@@ -181,17 +225,72 @@ function doiHref(doi) {
   return v.startsWith('10.') ? `https://doi.org/${v}` : v
 }
 
+function getButtonText() {
+  if (!authed.value) return 'Login to Analyze'
+  if (loading.value) {
+    if (uploadProgress.value > 0 && uploadProgress.value < 100) {
+      return `Uploading... ${uploadProgress.value}%`
+    }
+    if (uploadProgress.value === 100) {
+      return 'Processing...'
+    }
+    return 'Analyzing...'
+  }
+  return file.value ? 'Analyze PDF' : 'Choose a file to begin'
+}
+
 async function onSubmit() {
   if (!file.value) return
   loading.value = true
   error.value = ''
   result.value = null
+  uploadProgress.value = 0
+  uploadStatus.value = 'Preparing upload...'
+  processingStage.value = 0
+  
   try {
+    // Simulate upload progress
+    uploadStatus.value = 'Connecting to server...'
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    uploadProgress.value = 25
+    uploadStatus.value = 'Uploading file...'
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
+    uploadProgress.value = 50
+    uploadStatus.value = 'Processing upload...'
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    uploadProgress.value = 75
+    uploadStatus.value = 'Finalizing upload...'
+    await new Promise(resolve => setTimeout(resolve, 200))
+    
+    uploadProgress.value = 100
+    uploadStatus.value = 'Upload complete!'
+    
+    // Start processing simulation
+    setTimeout(() => {
+      processingStage.value = 1
+      setTimeout(() => {
+        processingStage.value = 2
+        setTimeout(() => {
+          processingStage.value = 3
+          setTimeout(() => {
+            processingStage.value = 4
+          }, 2000)
+        }, 1500)
+      }, 1000)
+    }, 500)
+    
     result.value = await analyzeSingle(file.value)
+    
   } catch (e) {
     error.value = String(e)
   } finally {
     loading.value = false
+    uploadProgress.value = 0
+    uploadStatus.value = ''
+    processingStage.value = 0
   }
 }
 </script>
@@ -586,6 +685,64 @@ async function onSubmit() {
 }
 
 .title-source { font-size: 0.85rem; color: #4a5568; font-style: italic; }
+
+/* Upload Progress */
+.upload-progress {
+  background: white; border-radius: 16px; padding: 2rem;
+  border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  margin-bottom: 2rem;
+}
+.progress-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;
+  font-weight: 600; color: #2d3748;
+}
+.progress-header i { color: #3182ce; font-size: 1.2rem; }
+.progress-percentage { color: #805ad5; font-weight: 700; }
+.progress-bar {
+  height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.progress-fill {
+  height: 100%; background: linear-gradient(90deg, #3182ce 0%, #805ad5 100%);
+  border-radius: 4px; transition: width 0.3s ease;
+}
+.progress-status { color: #718096; font-size: 0.9rem; text-align: center; }
+
+/* Processing Progress */
+.processing-progress {
+  background: white; border-radius: 16px; padding: 2rem;
+  border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  margin-bottom: 2rem;
+}
+.processing-header {
+  display: flex; align-items: center; justify-content: center; gap: 0.75rem;
+  margin-bottom: 1.5rem; font-weight: 600; color: #2d3748; font-size: 1.1rem;
+}
+.processing-header i { color: #805ad5; font-size: 1.3rem; }
+.processing-stages {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;
+}
+.stage {
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  padding: 1rem; border-radius: 12px; border: 2px solid #e2e8f0;
+  background: #f7fafc; transition: all 0.3s ease;
+}
+.stage.active {
+  border-color: #805ad5; background: linear-gradient(135deg, #faf5ff 0%, #e9d8fd 100%);
+  color: #553c9a;
+}
+.stage.completed {
+  border-color: #38a169; background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%);
+  color: #22543d;
+}
+.stage i {
+  font-size: 1.5rem; color: #cbd5e0; transition: color 0.3s ease;
+}
+.stage.active i { color: #805ad5; }
+.stage.completed i { color: #38a169; }
+.stage span {
+  font-size: 0.85rem; font-weight: 500; text-align: center;
+}
 
 @keyframes slideUp {
   from {

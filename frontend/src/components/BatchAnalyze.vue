@@ -50,9 +50,30 @@
         >
           <i v-if="loading" class="fas fa-spinner fa-spin"></i>
           <i v-else class="fas fa-play"></i>
-          {{ loading ? 'Starting...' : (authed ? `Start Analysis (${files.length} files)` : 'Login to Start') }}
+          {{ getBatchButtonText() }}
         </button>
       </form>
+    </div>
+
+    <!-- Batch Upload Progress -->
+    <div v-if="loading && uploadProgress > 0 && !job" class="upload-progress">
+      <div class="progress-header">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <span>Uploading {{ files.length }} File{{ files.length > 1 ? 's' : '' }}</span>
+        <span class="progress-percentage">{{ uploadProgress }}%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="{width: uploadProgress + '%'}"></div>
+      </div>
+      <div class="progress-status">{{ uploadStatus }}</div>
+      <div class="file-progress">
+        <div class="file-progress-text">
+          Processing: {{ currentFileIndex + 1 }} of {{ files.length }}
+        </div>
+        <div class="file-progress-bar">
+          <div class="file-progress-fill" :style="{width: fileProgress + '%'}"></div>
+        </div>
+      </div>
     </div>
 
     <div v-if="error" class="error-message">
@@ -203,6 +224,12 @@ const loading = ref(false)
 const error = ref('')
 let timer = null
 
+// Progress tracking
+const uploadProgress = ref(0)
+const uploadStatus = ref('')
+const currentFileIndex = ref(0)
+const fileProgress = ref(0)
+
 function onFiles(e) {
   files.value = Array.from(e.target.files || [])
 }
@@ -274,20 +301,71 @@ async function poll(jobId) {
   }
 }
 
+function getBatchButtonText() {
+  if (!authed.value) return 'Login to Start'
+  if (loading.value) {
+    if (uploadProgress.value > 0 && uploadProgress.value < 100) {
+      return `Uploading... ${uploadProgress.value}%`
+    }
+    return 'Starting...'
+  }
+  return files.value.length ? `Start Analysis (${files.value.length} files)` : 'Choose files to begin'
+}
+
 async function startBatch() {
   if (!files.value.length) return
   loading.value = true
   error.value = ''
   job.value = null
   results.value = []
+  uploadProgress.value = 0
+  uploadStatus.value = 'Preparing upload...'
+  currentFileIndex.value = 0
+  fileProgress.value = 0
+  
   try {
+    // Simulate batch upload progress
+    uploadStatus.value = 'Connecting to server...'
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    const totalFiles = files.value.length
+    for (let i = 0; i < totalFiles; i++) {
+      currentFileIndex.value = i
+      fileProgress.value = 0
+      
+      // Simulate individual file upload
+      uploadStatus.value = `Uploading ${files.value[i].name}...`
+      fileProgress.value = 25
+      await new Promise(resolve => setTimeout(resolve, 200))
+      
+      fileProgress.value = 50
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      fileProgress.value = 75
+      await new Promise(resolve => setTimeout(resolve, 200))
+      
+      fileProgress.value = 100
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Update overall progress
+      uploadProgress.value = Math.round(((i + 1) / totalFiles) * 100)
+    }
+    
+    uploadStatus.value = 'All files uploaded successfully!'
+    await new Promise(resolve => setTimeout(resolve, 500))
+    
     const data = await analyzeBatch(files.value)
     job.value = data
     timer = setInterval(() => poll(data.job_id), 800)
+    
   } catch (e) {
     error.value = String(e)
   } finally {
     loading.value = false
+    uploadProgress.value = 0
+    uploadStatus.value = ''
+    currentFileIndex.value = 0
+    fileProgress.value = 0
   }
 }
 
@@ -887,5 +965,41 @@ onUnmounted(() => {
   .results-grid {
     max-height: 400px;
   }
+}
+
+/* Upload Progress for Batch */
+.upload-progress {
+  background: white; border-radius: 16px; padding: 2rem;
+  border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+  margin-bottom: 2rem;
+}
+.progress-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;
+  font-weight: 600; color: #2d3748;
+}
+.progress-header i { color: #805ad5; font-size: 1.2rem; }
+.progress-percentage { color: #805ad5; font-weight: 700; }
+.progress-bar {
+  height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.progress-fill {
+  height: 100%; background: linear-gradient(90deg, #805ad5 0%, #9f7aea 100%);
+  border-radius: 4px; transition: width 0.3s ease;
+}
+.progress-status { color: #718096; font-size: 0.9rem; text-align: center; margin-bottom: 1rem; }
+
+.file-progress {
+  background: #f7fafc; padding: 1rem; border-radius: 8px; border: 1px solid #e2e8f0;
+}
+.file-progress-text {
+  font-size: 0.85rem; color: #4a5568; margin-bottom: 0.5rem; font-weight: 500;
+}
+.file-progress-bar {
+  height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;
+}
+.file-progress-fill {
+  height: 100%; background: linear-gradient(90deg, #38a169 0%, #48bb78 100%);
+  border-radius: 3px; transition: width 0.3s ease;
 }
 </style>

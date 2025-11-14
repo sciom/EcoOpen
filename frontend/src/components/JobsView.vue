@@ -120,6 +120,9 @@
             <button class="action success" :disabled="j.status !== 'done'" @click="onExport(j.job_id)">
               <i class="fas fa-file-csv"></i> CSV
             </button>
+            <button class="action warning" :disabled="!canRerun(j)" @click="onRerun(j.job_id)" title="Create new job with same files">
+              <i class="fas fa-plus"></i> New Job
+            </button>
             <button class="action danger" :disabled="!canCancel(j)" @click="onCancel(j.job_id)">
               <i class="fas fa-ban"></i> Cancel
             </button>
@@ -241,7 +244,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { getTasks, getJob, cancelTask, exportCsv, deleteTask, getJobLogs, downloadJobLogs, AUTH_EVENT, isAuthenticated, getIsAdmin, getAuthUserId, syncAuthMe } from '../api'
+import { getTasks, getJob, cancelTask, exportCsv, deleteTask, rerunTask, getJobLogs, downloadJobLogs, AUTH_EVENT, isAuthenticated, getIsAdmin, getAuthUserId, syncAuthMe } from '../api'
 
 const jobs = ref([])
 const status = ref('')
@@ -288,6 +291,15 @@ function pct(j) {
 function canCancel(j) {
   const terminal = j?.status !== 'running' && j?.status !== 'pending'
   if (terminal) return false
+  if (isAdmin.value) return true
+  const meId = getAuthUserId()
+  if (j?.user_id) return String(j.user_id) === String(meId)
+  return false
+}
+
+function canRerun(j) {
+  // Only allow rerunning completed or failed jobs
+  if (j?.status !== 'done' && j?.status !== 'error') return false
   if (isAdmin.value) return true
   const meId = getAuthUserId()
   if (j?.user_id) return String(j.user_id) === String(meId)
@@ -355,6 +367,23 @@ async function onCancel(jobId) {
 async function onExport(jobId) {
   try {
     await exportCsv(jobId)
+  } catch (e) {
+    error.value = String(e)
+  }
+}
+
+async function onRerun(jobId) {
+  try {
+    if (!confirm('Create a new job with the same files? This will not modify the original job.')) return
+    const result = await rerunTask(jobId)
+    // Small delay to allow backend to process job creation
+    await new Promise(resolve => setTimeout(resolve, 500))
+    await refresh()
+    
+    // Optionally show success message with new job ID
+    if (result.job_id && result.job_id !== jobId) {
+      console.log(`Created new job: ${result.job_id} (original: ${result.original_job_id})`)
+    }
   } catch (e) {
     error.value = String(e)
   }
@@ -499,6 +528,7 @@ async function fetchLogs() {
 .job-actions { display:flex; flex-direction:column; gap:0.5rem; width:140px; }
 .action { display:flex; align-items:center; justify-content:center; gap:0.5rem; padding:0.5rem; border-radius:8px; border:1px solid #cbd5e0; background:#f7fafc; color:#2d3748; cursor:pointer; font-weight:600; }
 .action.success { background:linear-gradient(135deg,#38a169 0%, #2f855a 100%); color:white; border:none; }
+.action.warning { background:linear-gradient(135deg,#ed8936 0%, #dd6b20 100%); color:white; border:none; }
 .action.danger { background:linear-gradient(135deg,#e53e3e 0%, #c53030 100%); color:white; border:none; }
 .action:disabled { opacity:.6; cursor:not-allowed; }
 

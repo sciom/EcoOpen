@@ -17,6 +17,15 @@ class PDFAnalysisResultModel(BaseModel):
     doi: Optional[str] = None
     data_availability_statement: Optional[str] = None
     code_availability_statement: Optional[str] = None
+    # New structured availability status fields
+    data_availability_status: Optional[str] = Field(
+        default=None,
+        description="open | restricted | embedded | none | future"
+    )
+    code_availability_status: Optional[str] = Field(
+        default=None,
+        description="open | restricted | none"
+    )
     data_sharing_license: Optional[str] = None
     code_license: Optional[str] = None
     data_links: List[str] = Field(default_factory=list)

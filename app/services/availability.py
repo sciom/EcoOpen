@@ -468,7 +468,9 @@ class AvailabilityEngine:
             if not domain:
                 return
             allowed = self._data_allowed_domains if label == "data" else self._code_allowed_domains
-            if domain in allowed or (domain == "doi.org" and self._is_dataset_doi(clean)):
+            # Treat dx.doi.org as doi.org for dataset DOIs
+            is_doi_domain = domain in {"doi.org", "dx.doi.org"}
+            if domain in allowed or (is_doi_domain and self._is_dataset_doi(clean)):
                 if validate_url(clean) and clean not in collected:
                     collected.append(clean)
 

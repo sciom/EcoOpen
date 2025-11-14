@@ -36,11 +36,25 @@ def validate_doi(doi: Optional[str]) -> Optional[str]:
     doi = re.sub(r"^(?:doi:|DOI:|https?://(?:dx\.)?doi\.org/)", "", doi)
     doi = doi.strip()
 
+    # Attempt to cut off trailing author/text fragments often appended in PDFs
+    # e.g., "10.5061/dryad.q205m(Lucas-Barbosa et al. 2015)" -> "10.5061/dryad.q205m"
+    if "(" in doi:
+        idx = doi.find("(")
+        prefix = doi[:idx].strip()
+        if re.match(r"^10\.\d{4,9}/[A-Za-z0-9._\-/:]+$", prefix):
+            doi = prefix
+
+    # Extract the longest valid-looking DOI prefix
+    m = re.match(r"^(10\.\d{4,9}/[A-Za-z0-9._\-/:]+)", doi)
+    if m:
+        doi = m.group(1)
+
+    # Clean up trailing punctuation
+    doi = re.sub(r"[.,;)\]]+$", "", doi)
+
     # Basic DOI pattern validation - must start with 10.
     doi_pattern = r"^10\.\d{4,9}/[^\s\"<>]+$"
     if re.match(doi_pattern, doi):
-        # Clean up trailing punctuation
-        doi = re.sub(r"[.,;)\]]+$", "", doi)
         return doi
 
     return None

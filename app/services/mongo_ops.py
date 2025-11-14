@@ -98,6 +98,11 @@ async def set_job_status(job_id: str, status: str, error: Optional[str] = None) 
         update["started_at"] = now
     if status in {"done", "error"}:
         update["finished_at"] = now
+    if status == "queued":
+        # Reset progress and timestamps when queuing for rerun
+        update["progress"] = {"current": 0, "total": 0}
+        update["started_at"] = None
+        update["finished_at"] = None
     await db["jobs"].update_one({"_id": ObjectId(job_id)}, {"$set": update})
 
 

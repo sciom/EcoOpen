@@ -3,10 +3,16 @@ from __future__ import annotations
 import hashlib
 from contextlib import asynccontextmanager
 import logging
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional, TYPE_CHECKING
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+# Avoid hard dependency on Mongo/BSON at import time so tests can monkeypatch
+if TYPE_CHECKING:  # type-only imports
+    from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+else:  # runtime fallbacks to keep module importable
+    AsyncIOMotorClient = Any  # type: ignore
+    AsyncIOMotorDatabase = Any  # type: ignore
+    AsyncIOMotorGridFSBucket = Any  # type: ignore
+
 from fastapi import FastAPI
 
 from app.core.config import settings
@@ -35,7 +41,14 @@ def get_fs() -> AsyncIOMotorGridFSBucket:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
-        Database.client = AsyncIOMotorClient(settings.MONGO_URI)
+        # Import motor lazily to avoid ImportError when dependencies are missing
+        from motor.motor_asyncio import AsyncIOMotorClient as _Client, AsyncIOMotorGridFSBucket as _Grid
+    except Exception as e:
+        logger.error("Mongo dependencies not available: %s", e)
+        raise RuntimeError(f"MongoDB dependencies not available: {e}")
+
+    try:
+        Database.client = _Client(settings.MONGO_URI)
         # Force a quick server selection to fail fast if Mongo is down
         await Database.client.server_info()
     except Exception as e:
@@ -43,7 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(f"MongoDB connection failed: {e}")
 
     Database.db = Database.client[settings.MONGO_DB_NAME]
-    Database.fs = AsyncIOMotorGridFSBucket(Database.db)
+    Database.fs = _Grid(Database.db)
 
     # Indexes
     await Database.db["documents"].create_index("sha256", unique=False)
@@ -81,7 +94,11 @@ async def put_file(content: bytes, filename: str, content_type: str, metadata: D
 
 async def read_file_to_path(file_id: str, path: str) -> None:
     fs = get_fs()
-    oid = ObjectId(file_id) if not isinstance(file_id, ObjectId) else file_id
+    try:
+        from bson import ObjectId as _ObjectId  # lazy import to avoid import-time failure
+    except Exception as e:
+        raise RuntimeError(f"BSON dependency not available: {e}")
+    oid = _ObjectId(file_id) if not isinstance(file_id, _ObjectId) else file_id
     stream = None
     try:
         # In Motor v3+, open_download_stream is async
@@ -105,4 +122,5 @@ async def read_file_to_path(file_id: str, path: str) -> None:
                     pass
             except Exception:
                 pass
+
 

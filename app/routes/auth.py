@@ -28,12 +28,16 @@ def _verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def _try_import_jose() -> Tuple[Optional[object], Optional[Exception]]:
+class _JWTError(Exception):
+    pass
+
+
+def _try_import_jose() -> Tuple[Optional[object], type[Exception]]:
     try:
         from jose import jwt, JWTError  # type: ignore
         return (jwt, JWTError)  # type: ignore
-    except Exception as e:
-        return (None, e)
+    except Exception:
+        return (None, _JWTError)
 
 
 def _require_jose():
@@ -62,14 +66,23 @@ class LoginModel:
         self.password = password
 
 
+def _get_db_callable():
+    import sys
+    mod = sys.modules.get("app.services.db")
+    get_db = getattr(mod, "get_db", None) if mod else None  # type: ignore
+    if callable(get_db):
+        return get_db  # type: ignore
+    try:
+        from app.services.db import get_db as imported_get_db  # type: ignore
+        if callable(imported_get_db):
+            return imported_get_db  # type: ignore
+    except Exception:
+        pass
+    raise HTTPException(status_code=503, detail="Auth requires Mongo dependencies (motor/pymongo).")
+
+
 @router.post("/register", response_model=UserPublic)
 async def register(body: Dict[str, Any]):
-    try:
-        # Lazy import to avoid ImportError when Mongo deps are missing
-        from app.services.db import get_db  # type: ignore
-    except Exception:
-        raise HTTPException(status_code=503, detail="Auth requires Mongo dependencies (motor/pymongo).")
-
     email = (body.get("email") or "").strip().lower()
     password = body.get("password") or ""
     password_confirm = body.get("password_confirm") or ""
@@ -81,6 +94,11 @@ async def register(body: Dict[str, Any]):
 
     if len(password) < 8 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters and include letters and numbers")
+
+    try:
+        from app.services.db import get_db  # type: ignore
+    except Exception:
+        raise HTTPException(status_code=503, detail="Auth requires Mongo dependencies (motor/pymongo).")
 
     db = get_db()
     existing = await db["users"].find_one({"email": email})

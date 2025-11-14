@@ -33,6 +33,8 @@ def test_doi_front_matter_harvest(monkeypatch, tmp_path):
         "Authors: ...",
     ])
     _patch_minimal(monkeypatch, blocks)
+    # Keep verification off for this front-matter harvest check
+    monkeypatch.setattr(settings, "ENABLE_DOI_VERIFICATION", False, raising=False)
     runner = AgentRunner()
 
     # Provide a dummy file path (not used due to patch)

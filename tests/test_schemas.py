@@ -26,6 +26,9 @@ def test_pdf_analysis_result_model():
     assert result.data_links == []
     assert result.code_links == []
     assert result.confidence_scores == {}
+    # New fields default
+    assert result.data_availability_status is None
+    assert result.code_availability_status is None
 
 
 def test_pdf_analysis_result_with_links():
@@ -33,12 +36,16 @@ def test_pdf_analysis_result_with_links():
     result = PDFAnalysisResultModel(
         title="Test Paper",
         data_links=["http://example.com/data"],
-        code_links=["http://github.com/repo"]
+        code_links=["http://github.com/repo"],
+        data_availability_status="open",
+        code_availability_status="restricted",
     )
 
     assert len(result.data_links) == 1
     assert len(result.code_links) == 1
     assert result.data_links[0] == "http://example.com/data"
+    assert result.data_availability_status == "open"
+    assert result.code_availability_status == "restricted"
 
 
 def test_batch_progress_model():

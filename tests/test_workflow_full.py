@@ -210,7 +210,7 @@ class WorkflowTestSuite:
                 report_lines.append(f"  Title: {result.result.title or 'None'}")
                 report_lines.append(f"  DOI: {result.result.doi or 'None'}")
                 report_lines.append(
-                    f"  Data Statement: {result.result.data_availability_statement[:60] + '...' if result.result.data_availability_statement and len(result.result.data_availability_statement) > 60 else result.result.data_availability_statement or 'None'}"
+                    f"  Data Statement: {result.result.data_availability_statement[:60] + '...' if result.result.data_availability_statement and len(result.result.data_availability_statement) > 60 else result.result.data_availability_statement or 'None'} (status={result.result.data_availability_status})"
                 )
                 report_lines.append(
                     f"  Code Statement: {result.result.code_availability_statement[:60] + '...' if result.result.code_availability_statement and len(result.result.code_availability_statement) > 60 else result.result.code_availability_statement or 'None'}"

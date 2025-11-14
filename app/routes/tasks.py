@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from bson import ObjectId
 
 from app.core.config import settings
 from app.models.schemas import JobLogEntryModel, BatchStatusModel, BatchProgress, PDFAnalysisResultModel
@@ -167,6 +168,74 @@ async def cancel_task(job_id: str, user: dict = Depends(_get_required_user)):
         pass
 
     return {"ok": True, "job_id": job_id, "status": "error"}
+
+
+@router.post("/{job_id}/rerun")
+async def rerun_task(job_id: str, user: dict = Depends(_get_required_user)):
+    try:
+        from app.services.mongo_ops import get_job_for_user, get_job, list_job_documents, create_job, create_document  # type: ignore
+        from app.services.db import get_db  # type: ignore
+        from bson import ObjectId
+    except Exception:
+        raise HTTPException(status_code=503, detail="Rerun requires Mongo dependencies (motor/pymongo).")
+
+    job = await (get_job(job_id) if _is_admin(user) else get_job_for_user(job_id, user["id"]))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Only allow rerunning completed or failed jobs
+    if job.get("status") not in ["done", "error"]:
+        raise HTTPException(status_code=400, detail="Can only rerun completed or failed jobs")
+
+    # Get all documents from the original job
+    documents = await list_job_documents(job_id)
+    if not documents:
+        raise HTTPException(status_code=404, detail="No documents found in job")
+
+    # Create a new job
+    new_job_id = await create_job(
+        total=len(documents),
+        document_ids=[],  # Will be populated as we create documents
+        user_id=user["id"],
+        user_email=user["email"]
+    )
+
+    # Create new documents for the new job, copying file data from originals
+    db = get_db()
+    new_document_ids = []
+    
+    for doc in documents:
+        try:
+            # Copy the document data but create fresh document for new job
+            gridfs_id = doc.get("gridfs_id")
+            if not gridfs_id:
+                logger.warning(f"Document {doc.get('_id')} has no gridfs_id, skipping")
+                continue
+                
+            new_doc_id = await create_document(
+                filename=doc.get("filename", "unknown.pdf"),
+                content_type=doc.get("content_type", "application/pdf"),
+                size=doc.get("size", 0),
+                sha256=doc.get("sha256", ""),
+                gridfs_id=gridfs_id,  # Reuse same GridFS file
+                job_id=new_job_id,
+                user_id=user["id"]
+            )
+            new_document_ids.append(new_doc_id)
+        except Exception as e:
+            # Log error but continue with other documents
+            logger.warning(f"Failed to copy document {doc.get('_id')} for rerun: {e}")
+
+    # Update the new job with the document IDs
+    try:
+        await db["jobs"].update_one(
+            {"_id": ObjectId(new_job_id)},
+            {"$set": {"document_ids": new_document_ids}}
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "job_id": new_job_id, "status": "queued", "original_job_id": job_id}
 
 
 @router.post("/{job_id}/delete")

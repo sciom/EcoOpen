@@ -69,6 +69,8 @@ class Settings(BaseSettings):
 
     # Worker concurrency (Mongo-based background worker)
     QUEUE_CONCURRENCY: int = Field(default=1, ge=1)
+    # Per-document processing timeout in seconds (skip after timeout)
+    DOC_PROCESS_TIMEOUT_SECONDS: int = Field(default=15 * 60, ge=60, le=24 * 60 * 60)
 
     # Logging
     LOG_LEVEL: str = Field(default="INFO")  # DEBUG|INFO|WARNING|ERROR|CRITICAL

@@ -48,7 +48,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise RuntimeError(f"MongoDB dependencies not available: {e}")
 
     try:
-        Database.client = _Client(settings.MONGO_URI)
+        Database.client = _Client(
+            settings.MONGO_URI,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=45000,
+            maxIdleTimeMS=60000,
+            maxPoolSize=10,
+            minPoolSize=1,
+        )
         # Force a quick server selection to fail fast if Mongo is down
         await Database.client.server_info()
     except Exception as e:

@@ -74,7 +74,32 @@ async def _claim_next_document() -> Optional[dict]:
                 await append_job_log(jid, op="doc_claimed", phase="claim", message="Document claimed for processing", doc_id=str(doc.get("_id")), filename=(doc.get("filename") or "document.pdf").replace(os.sep, "_"), worker=f"pid:{os.getpid()}", progress_current=None, progress_total=None)
         except Exception:
             pass
-    return doc
+        return doc
+
+    # If no document could be claimed, and a job is running, check if it should be finalized
+    try:
+        running_job = job or await get_running_job()
+    except Exception:
+        running_job = None
+
+    if running_job:
+        jid = str(running_job.get("_id"))
+        try:
+            remaining = await db["documents"].count_documents({"job_id": jid, "status": {"$in": ["queued", "processing"]}})
+        except Exception:
+            remaining = 0
+        if remaining == 0:
+            try:
+                await set_job_status(jid, "done")
+                await append_job_log(jid, op="job_done", phase="job", message="Job completed (no remaining documents)", worker=f"pid:{os.getpid()}")
+            except Exception:
+                pass
+            try:
+                await promote_next_pending_job()
+            except Exception:
+                pass
+
+    return None
 
 
 async def _process_one(doc: dict) -> None:
@@ -222,7 +247,54 @@ class MongoWorker:
                     await asyncio.sleep(self.poll_interval)
                     continue
                 try:
-                    await _process_one(doc)
+                    await asyncio.wait_for(_process_one(doc), timeout=settings.DOC_PROCESS_TIMEOUT_SECONDS)
+                except asyncio.TimeoutError:
+                    # Mark timed-out document as error and continue
+                    try:
+                        did = str(doc.get("_id"))
+                        job_id = doc.get("job_id")
+                        filename = (doc.get("filename") or "document.pdf").replace(os.sep, "_")
+                        msg = f"Processing timed out after {settings.DOC_PROCESS_TIMEOUT_SECONDS} seconds"
+                        if job_id:
+                            try:
+                                await append_job_log(
+                                    job_id,
+                                    level="error", phase="error", worker=f"pid:{os.getpid()}",
+                                    op="timeout",
+                                    message=msg,
+                                    doc_id=did,
+                                    filename=filename,
+                                )
+                            except Exception:
+                                pass
+                        await set_document_status(did, "error", error=msg)
+                        # Update progress and possibly finish the job
+                        if job_id:
+                            await inc_job_progress(job_id, by=1)
+                            job = await get_job(job_id)
+                            if job:
+                                cur = ((job.get("progress") or {}).get("current")) or 0
+                                total = ((job.get("progress") or {}).get("total")) or 0
+                                try:
+                                    pct = int(round((cur / total) * 100)) if total else 0
+                                except Exception:
+                                    pct = 0
+                                try:
+                                    await append_job_log(job_id, op="progress", phase="progress", message=f"Progress: {cur}/{total}", progress_current=cur, progress_total=total, percent=pct, worker=f"pid:{os.getpid()}")
+                                except Exception:
+                                    pass
+                                if cur >= total and (job.get("status") != "done"):
+                                    await set_job_status(job_id, "done")
+                                    try:
+                                        await append_job_log(job_id, op="job_done", phase="job", message="Job completed", progress_current=cur, progress_total=total, percent=100, worker=f"pid:{os.getpid()}")
+                                    except Exception:
+                                        pass
+                                    try:
+                                        await promote_next_pending_job()
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
                 except Exception as e:
                     # Best effort: mark as error if not already; also log details
                     logger.exception("Unhandled worker error while processing doc_id=%s", str(doc.get("_id")))
@@ -237,7 +309,7 @@ class MongoWorker:
                             try:
                                 await append_job_log(
                                     job_id,
-                        level="error", phase="error", worker=f"pid:{os.getpid()}",
+                                    level="error", phase="error", worker=f"pid:{os.getpid()}",
                                     op="error",
                                     message=err_text,
                                     doc_id=did,

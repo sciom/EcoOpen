@@ -247,12 +247,27 @@ async def promote_next_pending_job() -> Optional[Dict[str, Any]]:
     """Promote the oldest pending job to running if none is running.
 
     Returns the promoted job document, or None if no promotion occurred.
+    Also auto-finalizes a stale running job with no remaining documents.
     """
     db = get_db()
-    # If a job is already running, do nothing
+    # If a job is already running, ensure it's not stale; finalize if no docs remain
     existing = await db["jobs"].find_one({"status": "running"})
     if existing:
-        return None
+        try:
+            j_id = str(existing.get("_id"))
+            remaining = await db["documents"].count_documents({"job_id": j_id, "status": {"$in": ["queued", "processing"]}})
+            if remaining and int(remaining) > 0:
+                # A job is running and has remaining docs; do not promote another
+                return None
+            # No remaining docs for the running job; mark done and continue to promote next pending
+            await set_job_status(j_id, "done")
+            try:
+                await append_job_log(j_id, op="job_done", phase="job", message="Job auto-finalized by dispatcher (no remaining documents)")
+            except Exception:
+                pass
+        except Exception:
+            # If checks fail, be conservative and avoid promoting another job
+            return None
 
     now = now_utc()
     # Preferred fast path using ReturnDocument

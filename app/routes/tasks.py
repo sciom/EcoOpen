@@ -103,6 +103,8 @@ async def get_task_detail(job_id: str, user: dict = Depends(_get_required_user))
             get_job_for_user,
             list_job_documents,
             get_job,
+            set_job_status,
+            append_job_log,
         )  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Job status requires Mongo dependencies (motor/pymongo).")
@@ -127,6 +129,20 @@ async def get_task_detail(job_id: str, user: dict = Depends(_get_required_user))
 
     progress = job.get("progress") or {"current": 0, "total": len(docs)}
     status = job.get("status") or "pending"
+
+    # Auto-finalize if all docs are terminal but job still pending/running
+    try:
+        if status in {"pending", "running"}:
+            remaining = [d for d in docs if d.get("status") in {"queued", "processing", "uploaded"}]
+            if not remaining:
+                await set_job_status(job_id, "done")
+                try:
+                    await append_job_log(job_id, op="job_done", phase="job", message="Job finalized in status endpoint")
+                except Exception:
+                    pass
+                status = "done"
+    except Exception:
+        pass
 
     dur_ms = None
     try:

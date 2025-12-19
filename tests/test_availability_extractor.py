@@ -89,6 +89,23 @@ def test_extract_statements_without_headings():
     assert 0.0 <= result.data_confidence <= 0.7
 
 
+def test_data_accessibility_heading_and_spaced_domain_fixed():
+    pages = [
+        "DATA ACCESSIBILITY:\nAll R scripts and datasets needed to reproduce the analyses are available at https://zenod o.org/record/7010687.",
+    ]
+    engine = _engine()
+
+    def bad_chat(system: str, prompt: str) -> str:
+        return ""
+
+    result = engine.extract(pages, chat_fn=bad_chat, diagnostics=False)
+
+    assert result.data_statement is not None
+    assert "datasets needed to reproduce" in result.data_statement.lower()
+    # Ensure de-spaced zenodo domain is recognized and captured
+    assert any("zenodo.org/record/7010687" in u for u in result.data_links)
+
+
 def test_heading_only_does_not_return_statement():
     pages = [
         "Data availability:",

@@ -156,6 +156,10 @@ async def analyze(file: UploadFile = File(...),
             get_document,
             create_job,
             set_document_job_id,
+            inc_job_progress,
+            set_job_status,
+            append_job_log,
+            get_job,
         )  # type: ignore
     except ImportError:
         # If queue was explicitly requested, surface 503. Otherwise, fall back to sync.
@@ -220,7 +224,7 @@ async def analyze(file: UploadFile = File(...),
         await asyncio.sleep(interval_s)
         waited += interval_s
 
-    # Fallback: run sync, mark as processing, and persist into document for consistency
+    # Fallback: no worker picked it up; do sync and finalize the job to prevent stuck 'pending'
     await set_document_status(doc_id, "processing")
     tmp_path = f"/tmp/{os.getpid()}_{safe_filename}"
     with open(tmp_path, "wb") as f:
@@ -229,6 +233,7 @@ async def analyze(file: UploadFile = File(...),
         agent = AgentRunner()
         model_res = await asyncio.to_thread(agent.analyze, tmp_path)
         model_res.source_file = safe_filename
+        # Persist analysis and progress; finalize job as done
         try:
             await set_document_analysis(doc_id, {
                 "title": model_res.title,
@@ -243,16 +248,48 @@ async def analyze(file: UploadFile = File(...),
                 "confidence_scores": model_res.confidence_scores,
             })
         except Exception:
-            # Don't fail the request if persisting fails
+            pass
+        # Best-effort job progress + status/logs to avoid lingering 'pending'
+        try:
+            job = await get_job(job_id)
+            if job:
+                await inc_job_progress(job_id, by=1)
+                await set_job_status(job_id, "done")
+                try:
+                    await append_job_log(job_id, op="job_done", phase="job", message="Job completed via sync fallback")
+                except Exception:
+                    pass
+        except Exception:
             pass
         return model_res
     except EmbeddingModelMissingError as e:
+        # Mark job error on failure paths
+        try:
+            await set_job_status(job_id, "error", error=str(e))
+            await append_job_log(job_id, level="error", op="error", phase="error", message=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail={"message": str(e), "model": settings.OLLAMA_EMBED_MODEL, "code": "embed_model_missing"})
     except InvalidPDFError as e:
+        try:
+            await set_job_status(job_id, "error", error=str(e))
+            await append_job_log(job_id, level="error", op="error", phase="error", message=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail=str(e))
     except LLMServiceError as e:
+        try:
+            await set_job_status(job_id, "error", error=str(e))
+            await append_job_log(job_id, level="error", op="error", phase="error", message=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
+        try:
+            await set_job_status(job_id, "error", error=str(e))
+            await append_job_log(job_id, level="error", op="error", phase="error", message=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
     finally:
         try:
@@ -320,6 +357,8 @@ async def get_job(job_id: str, user: dict = Depends(_get_required_user)):
             get_job_for_user,
             list_job_documents,
             get_job,
+            set_job_status,
+            append_job_log,
         )  # type: ignore
     except ImportError:
         raise HTTPException(status_code=503, detail="Job status requires Mongo dependencies (motor/pymongo).")
@@ -339,6 +378,20 @@ async def get_job(job_id: str, user: dict = Depends(_get_required_user)):
 
     progress = job.get("progress") or {"current": 0, "total": len(docs)}
     status = job.get("status") or "pending"
+
+    # Auto-finalize if all docs are terminal but job still pending
+    try:
+        if status in {"pending", "running"}:
+            remaining = [d for d in docs if d.get("status") in {"queued", "processing", "uploaded"}]
+            if not remaining:
+                await set_job_status(job_id, "done")
+                try:
+                    await append_job_log(job_id, op="job_done", phase="job", message="Job finalized in status endpoint")
+                except Exception:
+                    pass
+                status = "done"
+    except Exception:
+        pass
 
     dur_ms = None
     try:

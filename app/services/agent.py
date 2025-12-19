@@ -247,6 +247,14 @@ class AgentRunner:
 
         # Join merged lines
         t = "\n".join(merged_lines)
+        # Repair intra-word spaced letters caused by OCR (e.g., 't r o p i c a l i z a t i o n')
+        def _compact_word_sequence(match: re.Match) -> str:
+            seq = match.group(0)
+            letters = seq.split()
+            if len(letters) >= 4:
+                return "".join(letters)
+            return seq
+        t = re.sub(r"(?:\b\w\b\s+){3,}\w\b", _compact_word_sequence, t)
 
         # Now extract sentences and ensure proper separation
         # Split on sentence-ending punctuation (. ! ? ;) followed by whitespace
@@ -787,6 +795,32 @@ class AgentRunner:
         )
         if code_license and len(code_license) < 5:
             code_license = None
+        # Normalize license identifiers for consistency
+        def _norm_license(txt: Optional[str]) -> Optional[str]:
+            if not txt:
+                return None
+            t = txt.strip()
+            low = t.lower()
+            patterns = [
+                (r"creative\s+commons\s+attribution\s+4\.0", "CC-BY-4.0"),
+                (r"creative\s+commons\s+attribution", "CC-BY"),
+                (r"cc[- ]by[- ]4\.0", "CC-BY-4.0"),
+                (r"cc[- ]by", "CC-BY"),
+                (r"mit\s+license", "MIT"),
+                (r"gpl\s*v?3", "GPL-3.0"),
+                (r"apache\s+2", "Apache-2.0"),
+                (r"bsd\s+3", "BSD-3-Clause"),
+                (r"bsd\s+2", "BSD-2-Clause"),
+                (r"cc0", "CC0"),
+            ]
+            for pat, rep in patterns:
+                if re.search(pat, low):
+                    return rep
+            # Fallback: collapse whitespace and capitalize common tokens
+            t = re.sub(r"\s+", " ", t)
+            return t
+        data_license = _norm_license(data_license)
+        code_license = _norm_license(code_license)
 
         # Optional link verification/normalization (non-network)
         if settings.ENABLE_LINK_VERIFICATION:
@@ -827,22 +861,81 @@ class AgentRunner:
             if not statement:
                 return "none"
             s = statement.lower()
-            if any(phrase in s for phrase in ["will be available", "will be made available", "will become available"]):
+            # Future availability patterns
+            future_phrases = [
+                "will be available",
+                "will be made available",
+                "will become available",
+                "will be deposited",
+                "will be archived",
+                "available after",
+                "available upon publication",
+            ]
+            if any(p in s for p in future_phrases):
                 return "future"
-            if any(phrase in s for phrase in ["upon request", "available upon request", "reasonable request", "from the corresponding author", "available from the corresponding author"]):
+            # Restricted availability patterns
+            restricted_phrases = [
+                "upon request",
+                "available upon request",
+                "reasonable request",
+                "from the corresponding author",
+                "available from the corresponding author",
+                "available by request",
+                "requests to the corresponding author",
+            ]
+            if any(p in s for p in restricted_phrases):
                 return "restricted"
-            if kind == "data" and any(p in s for p in ["in the paper", "in the article", "within the article", "in the supplementary", "in the supplement", "supplementary material", "supporting information only"]):
-                # Only treat as embedded if there are no external links
+            # Embedded only (no external repository)
+            embedded_phrases = [
+                "in the paper",
+                "in the article",
+                "within the article",
+                "in the supplementary",
+                "in the supplement",
+                "supplementary material",
+                "supporting information only",
+                "supplementary materials",
+            ]
+            if kind == "data" and any(p in s for p in embedded_phrases):
                 if not links:
                     return "embedded"
             if links:
                 return "open"
-            # Fallback
             return "none"
 
         data_status = _status_from(data_stmt, data_links, "data")
         code_status = _status_from(code_stmt, code_links, "code")
 
+        # Quality warnings
+        quality_warnings: List[str] = []
+        def _is_truncated(stmt: Optional[str]) -> bool:
+            if not stmt:
+                return False
+            return bool(re.search(r"https:?$", stmt.strip()))
+        if _is_truncated(data_stmt):
+            quality_warnings.append("data_statement_truncated_url")
+        if _is_truncated(code_stmt):
+            quality_warnings.append("code_statement_truncated_url")
+        # Fused link detection (raw contexts may have been split; if any http appears >1 in original statement without separator)
+        def _fused(stmt: Optional[str]) -> bool:
+            if not stmt:
+                return False
+            s = stmt.lower()
+            return s.count("http://") + s.count("https://") > len(data_links) + len(code_links) + 1
+        if _fused(data_stmt):
+            quality_warnings.append("data_fused_links_possible")
+        if _fused(code_stmt):
+            quality_warnings.append("code_fused_links_possible")
+        # License issues
+        if data_license and code_license and data_license == code_license:
+            quality_warnings.append("identical_data_code_license")
+        if data_license and not re.search(r"\d", data_license) and data_license.startswith("CC-BY"):
+            quality_warnings.append("data_license_missing_version")
+        # Attach warnings into debug_info for transparency
+        if isinstance(debug_info, dict):
+            debug_info.setdefault("quality_warnings", quality_warnings)
+        else:
+            debug_info = {"quality_warnings": quality_warnings}
         return PDFAnalysisResultModel(
             title=title,
             title_source=title_src,

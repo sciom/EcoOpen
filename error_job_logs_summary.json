@@ -1,0 +1,128 @@
+{
+  "jobs": [
+    {
+      "job_id": "69173549d205f4c07bb8bf57",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 5,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": "analyze",
+      "ops_sequence": [
+        "job_started",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start"
+      ],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "6915be98ebee7f117177afd1",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 1,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": "job",
+      "ops_sequence": [
+        "job_started"
+      ],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "6915a690101256384152b192",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 29,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": "progress",
+      "ops_sequence": [
+        "job_started",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start",
+        "analyze_pdf_end",
+        "doc_done",
+        "progress",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start",
+        "analyze_pdf_end",
+        "doc_done",
+        "progress",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start",
+        "analyze_pdf_end",
+        "doc_done",
+        "progress",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start",
+        "analyze_pdf_end",
+        "doc_done",
+        "progress"
+      ],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "6915a066889e524947edefac",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 5,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": "analyze",
+      "ops_sequence": [
+        "job_started",
+        "doc_claimed",
+        "gridfs_read_start",
+        "gridfs_read_end",
+        "analyze_pdf_start"
+      ],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "69159c1b889e524947edefa6",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 0,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": null,
+      "ops_sequence": [],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "69159a69889e524947edef9f",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 0,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": null,
+      "ops_sequence": [],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "69159130889e524947edef9a",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 0,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": null,
+      "ops_sequence": [],
+      "error_log_tail": []
+    },
+    {
+      "job_id": "6915911c889e524947edef95",
+      "job_error_field": "Cancelled by user",
+      "total_logs": 0,
+      "error_logs_count": 0,
+      "first_error": null,
+      "last_phase": null,
+      "ops_sequence": [],
+      "error_log_tail": []
+    }
+  ]
+}

@@ -215,6 +215,16 @@ class PDFTextNormalizer:
         cleaned = re.sub(r"\s+\.", ".", cleaned)
         cleaned = re.sub(r"\s+,", ",", cleaned)
         cleaned = self._canonicalize_urls(cleaned)
+        # Compact OCR spaced letter sequences (e.g., 't r o p i c a l') into single words
+        def _compact(match: re.Match) -> str:
+            seq = match.group(0)
+            parts = seq.strip().split()
+            if len(parts) >= 4:
+                return "".join(parts)
+            return seq
+        cleaned = re.sub(r"(?:\b\w\b\s+){3,}\w\b", _compact, cleaned)
+        # Split fused URLs introduced by missing whitespace (multiple http occurrences).
+        cleaned = re.sub(r"(https?://[^\s]{10,}?)(https?://)", r"\1 \2", cleaned)
 
         lower = cleaned.lower()
         if lower.startswith(("orcid", "keywords", "received", "accepted", "submitted", "correspondence")):

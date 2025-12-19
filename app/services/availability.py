@@ -89,6 +89,8 @@ class AvailabilityEngine:
         )
         self._data_keywords = (
             "data availability",
+            "data availability statement",
+            "data accessibility",
             "data are available",
             "data is available",
             "data deposited",
@@ -222,6 +224,13 @@ class AvailabilityEngine:
         keywords = self._data_keywords if label == "data" else self._code_keywords
         heading_label = label
 
+        # Identify heading indices to boost the immediate following paragraphs
+        heading_indices = {p.index for p in paragraphs if p.label == heading_label}
+        neighbor_indices = set()
+        for hi in heading_indices:
+            neighbor_indices.add(hi + 1)
+            neighbor_indices.add(hi + 2)
+
         for para in paragraphs:
             if not para.text:
                 continue
@@ -232,6 +241,10 @@ class AvailabilityEngine:
                 score += 5.0
             elif para.label == "generic":
                 score += 1.0
+
+            # Boost paragraphs that immediately follow a relevant heading
+            if para.index in neighbor_indices:
+                score += 2.2
 
             for kw in keywords:
                 if kw in lower:
@@ -348,7 +361,19 @@ class AvailabilityEngine:
             if verdict == "present" and raw_text and raw_text.lower() != "none":
                 canonical_raw = self._canonicalize_urls(self._repair_spacing(raw_text))
                 if self._quote_in_contexts(canonical_raw, contexts) and self._contains_availability_keywords(canonical_raw, label=label):
-                    filtered_links = self._filter_links(canonical_raw, links, label=label)
+                    safe_links = links if isinstance(links, (list, tuple)) else []
+                    # Split fused links by looking ahead at new http(s) schemes
+                    expanded_links: List[str] = []
+                    for entry in safe_links:
+                        if isinstance(entry, str) and entry.count("http") > 1:
+                            parts = re.split(r"(?=https?://)", entry)
+                            for p in parts:
+                                p = p.strip()
+                                if p:
+                                    expanded_links.append(p)
+                        elif isinstance(entry, str):
+                            expanded_links.append(entry)
+                    filtered_links = self._filter_links(canonical_raw, expanded_links, label=label)
                     final_statement_raw = str(clean_stmt).strip() if isinstance(clean_stmt, str) and clean_stmt.strip().lower() != "none" else canonical_raw
                     final_statement = self._canonicalize_urls(self._repair_spacing(final_statement_raw))
                     conf = self._normalize_confidence(confidence, base=0.75)
@@ -432,6 +457,16 @@ class AvailabilityEngine:
             text,
             flags=re.IGNORECASE,
         )
+        # Fix intra-domain spacing like "zenod o", "git lab"
+        fixed_domains = [
+            (r"z\s*e\s*n\s*o\s*d\s*o", "zenodo"),
+            (r"d\s*r\s*y\s*a\s*d", "dryad"),
+            (r"g\s*i\s*t\s*h\s*u\s*b", "github"),
+            (r"g\s*i\s*t\s*l\s*a\s*b", "gitlab"),
+            (r"o\s*s\s*f", "osf"),
+        ]
+        for pat, rep in fixed_domains:
+            cleaned = re.sub(pat, rep, cleaned, flags=re.IGNORECASE)
         pattern = re.compile(r"(https?://[^\s]+)\s+([^\s])")
         while True:
             def repl(match: re.Match[str]) -> str:
@@ -453,6 +488,8 @@ class AvailabilityEngine:
 
     def _filter_links(self, context_text: str, links: Iterable[object], *, label: str) -> List[str]:
         collected: List[str] = []
+        # Canonicalize any spaced/broken URLs in the context first
+        context_text = self._canonicalize_urls(context_text)
 
         def _maybe_add(url: str) -> None:
             clean = url.strip().rstrip(".,;)]}")
@@ -468,11 +505,15 @@ class AvailabilityEngine:
             if not domain:
                 return
             allowed = self._data_allowed_domains if label == "data" else self._code_allowed_domains
-            # Treat dx.doi.org as doi.org for dataset DOIs
+            # Treat dx.doi.org as doi.org for dataset DOIs; only count dataset DOIs for data, not code
             is_doi_domain = domain in {"doi.org", "dx.doi.org"}
-            if domain in allowed or (is_doi_domain and self._is_dataset_doi(clean)):
-                if validate_url(clean) and clean not in collected:
-                    collected.append(clean)
+            ok = False
+            if domain in allowed:
+                ok = True
+            elif is_doi_domain and label == "data" and self._is_dataset_doi(clean):
+                ok = True
+            if ok and validate_url(clean) and clean not in collected:
+                collected.append(clean)
 
         if links:
             for entry in links:
@@ -480,8 +521,21 @@ class AvailabilityEngine:
                     _maybe_add(entry)
 
         if not collected:
+            # First pass simple pattern
             pattern = r"http[s]?://[^\s\)]+"
-            for match in re.findall(pattern, context_text):
+            raw_matches = re.findall(pattern, context_text)
+            # Detect fused URLs and split on subsequent http(s) occurrences
+            fixed_matches: List[str] = []
+            for m in raw_matches:
+                if m.count("http") > 1:
+                    parts = re.split(r"(?=https?://)", m)
+                    for p in parts:
+                        p = p.strip()
+                        if p:
+                            fixed_matches.append(p)
+                else:
+                    fixed_matches.append(m)
+            for match in fixed_matches:
                 _maybe_add(match)
 
         return collected

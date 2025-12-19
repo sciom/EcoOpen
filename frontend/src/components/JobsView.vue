@@ -80,6 +80,14 @@
                 <span class="label">Progress:</span>
                 <span class="value">{{ j.progress?.current || 0 }} / {{ j.progress?.total || 0 }}</span>
               </div>
+              <div class="meta-line" v-if="j.status === 'pending' && j.queue_position">
+                <span class="label">Queue Position:</span>
+                <span class="value queue-position">
+                  <i class="fas fa-layer-group"></i>
+                  #{{ j.queue_position }}
+                  <span class="queue-hint">({{ queuePositionText(j.queue_position) }})</span>
+                </span>
+              </div>
               <div class="meta-line" v-if="isAdmin && (j.created_by?.email || j.created_by?.user_id)">
                 <span class="label">Created by:</span>
                 <span class="value">
@@ -280,6 +288,13 @@ function statusText(s) {
     case 'error': return 'Error'
     default: return 'Unknown'
   }
+}
+
+function queuePositionText(pos) {
+  if (pos === 1) return 'next to run'
+  if (pos === 2) return '2nd in queue'
+  if (pos === 3) return '3rd in queue'
+  return `${pos}th in queue`
 }
 
 function pct(j) {
@@ -517,6 +532,9 @@ async function fetchLogs() {
 .job-meta { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.4rem 1rem; }
 .meta-line { display:flex; gap:0.5rem; font-size:0.9rem; color:#4a5568; }
 .meta-line .label { font-weight:600; color:#2d3748; }
+.queue-position { display:inline-flex; align-items:center; gap:0.4rem; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:white; padding:0.25rem 0.75rem; border-radius:999px; font-weight:700; font-size:0.85rem; }
+.queue-position i { font-size:0.75rem; }
+.queue-hint { font-weight:400; opacity:0.9; font-size:0.85rem; margin-left:0.25rem; }
 .mono { font-family: 'Courier New', monospace; }
 .progress { display:flex; align-items:center; gap:0.75rem; }
 .bar { height:10px; background:#e2e8f0; border-radius:6px; flex:1; overflow:hidden; }

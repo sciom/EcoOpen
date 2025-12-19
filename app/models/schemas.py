@@ -54,6 +54,10 @@ class BatchStatusModel(BaseModel):
     results: Optional[List[PDFAnalysisResultModel]] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None
+    queue_position: Optional[int] = Field(
+        default=None,
+        description="Position in queue for pending jobs (1 = next to run)"
+    )
 
 
 class HealthModel(BaseModel):

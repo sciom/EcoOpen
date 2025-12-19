@@ -311,3 +311,28 @@ async def list_pending_jobs(limit: int = 100) -> List[Dict[str, Any]]:
     db = get_db()
     cur = db["jobs"].find({"status": "pending"}).sort("created_at", 1).limit(limit)
     return await cur.to_list(length=limit)
+
+
+async def get_queue_position(job_id: str) -> Optional[int]:
+    """Get the position of a pending job in the queue.
+    
+    Returns 1 for the next job to run, 2 for the second, etc.
+    Returns None if job is not pending or not found.
+    """
+    db = get_db()
+    job = await db["jobs"].find_one({"_id": ObjectId(job_id)})
+    if not job or job.get("status") != "pending":
+        return None
+    
+    # Count how many pending jobs have earlier created_at timestamps
+    created_at = job.get("created_at")
+    if not created_at:
+        return None
+    
+    position = await db["jobs"].count_documents({
+        "status": "pending",
+        "created_at": {"$lt": created_at}
+    })
+    
+    # Position is 1-indexed (1 = next to run)
+    return position + 1

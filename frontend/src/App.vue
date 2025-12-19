@@ -187,6 +187,8 @@ function onWindowClick(e) {
   backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   padding: 1rem 0;
+  position: relative;
+  z-index: 100;
 }
 
 .header-content {
@@ -237,7 +239,7 @@ function onWindowClick(e) {
   border-radius: 12px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
   padding: 0.25rem;
-  z-index: 1000;
+  z-index: 101;
   backdrop-filter: blur(6px);
 }
 

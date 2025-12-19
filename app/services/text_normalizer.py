@@ -76,6 +76,14 @@ class PDFTextNormalizer:
                     for paragraph in self._words_to_paragraphs(column_words):
                         cleaned = self._clean_paragraph(paragraph)
                         if cleaned:
+                            # Debug log for paragraphs containing URL patterns
+                            if 'http' in cleaned.lower() and cleaned.endswith((':', 'https:', 'http:')):
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.warning(
+                                    f"Incomplete URL detected in paragraph (page {page_idx}, col {column_index}): "
+                                    f"'{cleaned[-50:]}'"
+                                )
                             blocks.append(
                                 ParagraphBlock(
                                     text=cleaned,
@@ -171,6 +179,9 @@ class PDFTextNormalizer:
         if buffer:
             paragraphs.append(" ".join(buffer))
 
+        # Post-process paragraphs to merge continuation lines and fix broken URLs
+        paragraphs = self._merge_broken_urls(paragraphs)
+        
         return self._merge_inline_headings(paragraphs)
 
     def _line_to_text(self, words: Sequence[dict]) -> str:
@@ -196,6 +207,49 @@ class PDFTextNormalizer:
                 merged.append(stripped)
         return merged
 
+    def _merge_broken_urls(self, paragraphs: Sequence[str]) -> List[str]:
+        """Merge paragraphs that contain broken URLs continuing from previous paragraph."""
+        if not paragraphs:
+            return []
+        
+        merged: List[str] = []
+        i = 0
+        while i < len(paragraphs):
+            current = paragraphs[i].strip()
+            
+            # Check if current paragraph ends with incomplete URL (https: or http:)
+            if re.search(r'https?:\s*$', current, re.IGNORECASE):
+                # Merge with next paragraph until we have a complete URL
+                combined = current
+                j = i + 1
+                found_complete = False
+                while j < len(paragraphs) and (j - i) < 3:
+                    next_para = paragraphs[j].strip()
+                    combined = combined.rstrip() + " " + next_para
+                    
+                    # Normalize the combined text to fix URL spacing before checking
+                    normalized = re.sub(r'(https?)\s*:\s*/\s*/', r'\1://', combined, flags=re.IGNORECASE)
+                    
+                    # Check for complete URL with domain and TLD
+                    if re.search(r'https?://[\w\-]+\.[\w\-]+', normalized, re.IGNORECASE):
+                        # Found complete URL - use normalized version
+                        merged.append(normalized)
+                        i = j + 1
+                        found_complete = True
+                        break
+                    j += 1
+                
+                if not found_complete:
+                    # Didn't find complete URL, normalize and add what we have
+                    normalized = re.sub(r'(https?)\s*:\s*/\s*/', r'\1://', combined, flags=re.IGNORECASE)
+                    merged.append(normalized)
+                    i = j
+            else:
+                merged.append(current)
+                i += 1
+        
+        return merged
+
     def _split_simple(self, text: str) -> List[str]:
         if not text:
             return []
@@ -214,15 +268,34 @@ class PDFTextNormalizer:
         cleaned = re.sub(r"\s+", " ", cleaned)
         cleaned = re.sub(r"\s+\.", ".", cleaned)
         cleaned = re.sub(r"\s+,", ",", cleaned)
+        
+        # Canonicalize URLs FIRST before any other transformations
         cleaned = self._canonicalize_urls(cleaned)
+        
+        # Protect URLs from further processing by temporarily replacing them
+        url_placeholders: List[Tuple[str, str]] = []
+        url_pattern = re.compile(r'https?://[^\s]+', re.IGNORECASE)
+        for idx, match in enumerate(url_pattern.finditer(cleaned)):
+            placeholder = f"__URL_PLACEHOLDER_{idx}__"
+            url_placeholders.append((placeholder, match.group(0)))
+        for placeholder, url in url_placeholders:
+            cleaned = cleaned.replace(url, placeholder, 1)
+        
         # Compact OCR spaced letter sequences (e.g., 't r o p i c a l') into single words
+        # Only match sequences that are clearly OCR artifacts (single letters with spaces)
         def _compact(match: re.Match) -> str:
             seq = match.group(0)
             parts = seq.strip().split()
-            if len(parts) >= 4:
+            # Only compact if we have 5+ single letters in sequence
+            if len(parts) >= 5 and all(len(p) == 1 and p.isalpha() for p in parts):
                 return "".join(parts)
             return seq
-        cleaned = re.sub(r"(?:\b\w\b\s+){3,}\w\b", _compact, cleaned)
+        cleaned = re.sub(r"(?:\b[a-zA-Z]\b\s+){4,}[a-zA-Z]\b", _compact, cleaned)
+        
+        # Restore URLs
+        for placeholder, url in url_placeholders:
+            cleaned = cleaned.replace(placeholder, url)
+        
         # Split fused URLs introduced by missing whitespace (multiple http occurrences).
         cleaned = re.sub(r"(https?://[^\s]{10,}?)(https?://)", r"\1 \2", cleaned)
 
@@ -236,31 +309,67 @@ class PDFTextNormalizer:
         return cleaned.strip()
 
     def _canonicalize_urls(self, text: str) -> str:
+        # Step 0: Remove invisible Unicode characters that break URLs
+        invisible_chars = [
+            '\u200B',  # Zero-width space
+            '\u200C',  # Zero-width non-joiner  
+            '\u200D',  # Zero-width joiner
+            '\u00AD',  # Soft hyphen
+            '\uFEFF',  # Zero-width no-break space
+        ]
+        for char in invisible_chars:
+            text = text.replace(char, '')
+        
+        # Step 1: Remove urldefense wrappers (handle spaces in urldefense itself)
         cleaned = re.sub(
-            r"https?://urldefense\.com/v3/__/?(?P<url>https?://[^\s]+)",
-            lambda m: m.group("url"),
+            r'https?://\s*urlde\s*fense\s*\.\s*com\s*/\s*v3\s*/\s*__\s*/?',
+            '',
             text,
             flags=re.IGNORECASE,
         )
-        pattern = re.compile(r"(https?://[^\s]+)\s+([^\s])")
-        while True:
-            def repl(match: re.Match[str]) -> str:
-                follower = match.group(2)
-                tail = match.string[match.end(0): match.end(0) + 10]
-                if follower in "/?-_=.":
-                    return match.group(1) + follower
-                if any(ch in "/?-_=." for ch in tail):
-                    return match.group(1) + follower
-                if match.group(1).endswith(("=", "-", "_")):
-                    return match.group(1) + follower
-                return match.group(1) + " " + follower
-
-            updated = pattern.sub(repl, cleaned)
-            if updated == cleaned:
-                break
-            cleaned = updated
-        cleaned = re.sub(r"(https?://[^\s]+)(?=[A-Za-z])", r"\1 ", cleaned)
-        return cleaned
+        
+        # Step 2: Fix protocol splits: "http : / /" or "http:/ /" -> "http://"
+        cleaned = re.sub(r'(https?)\s*:\s*/\s*/\s*', r'\1://', cleaned, flags=re.IGNORECASE)
+        
+        # Step 3: Remove spaces within URLs (simple character-by-character)
+        result = []
+        i = 0
+        while i < len(cleaned):
+            # Look for http:// or https://
+            match = re.match(r'(https?://)', cleaned[i:], re.IGNORECASE)
+            if match:
+                # Found a URL start
+                result.append(match.group(1))
+                i += match.end()
+                
+                # Collect URL characters, removing spaces
+                url_chars = []
+                while i < len(cleaned) and len(url_chars) < 200:
+                    # Check for end of URL: space + common word
+                    remaining = cleaned[i:]
+                    if remaining.startswith((' and ', ' the ', ' on ', ' at ', ' in ', ' from ', ' or ', ' to ', ' are ', ' is ')):
+                        break
+                    
+                    ch = cleaned[i]
+                    # Skip whitespace in URLs
+                    if ch in ' \t\n\r':
+                        i += 1
+                        continue
+                    # Collect URL characters
+                    elif ch.isalnum() or ch in '.-_/=?&:#%':
+                        url_chars.append(ch)
+                        i += 1
+                    else:
+                        # Non-URL character, stop
+                        break
+                
+                result.append(''.join(url_chars))
+            else:
+                # Regular character, just copy it
+                result.append(cleaned[i])
+                i += 1
+        
+        return ''.join(result)
 
     # ------------------------------------------------------------------ helpers
     def _singleton_ratio(self, words: Sequence[dict]) -> float:

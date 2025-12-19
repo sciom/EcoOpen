@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 import chromadb
@@ -172,14 +172,29 @@ class AgentRunner:
 
     def _load_pdf_blocks(self, pdf_path: str) -> List[ParagraphBlock]:
         try:
+            # Try PyMuPDF first (fastest and cleanest for text PDFs)
+            try:
+                from app.services.pdf_extractor_fitz import PyMuPDFExtractor
+                extractor = PyMuPDFExtractor()
+                blocks = extractor.extract(pdf_path)
+                if blocks:
+                    logger.debug("Used PyMuPDF for text extraction")
+                    return blocks
+            except Exception as exc:
+                logger.debug("PyMuPDF extraction failed: %s", exc)
+            
+            # Fall back to pdfplumber (better for complex layouts, OCR)
             if self._text_normalizer is not None:
                 try:
                     blocks = self._text_normalizer.extract(pdf_path)
                     if blocks:
+                        logger.debug("Used pdfplumber for text extraction")
                         return blocks
                 except Exception as exc:
-                    logger.debug("text_normalizer_failed %s", exc, exc_info=True)
+                    logger.debug("pdfplumber extraction failed: %s", exc)
 
+            # Final fallback: PyPDFLoader (basic)
+            logger.debug("Falling back to PyPDFLoader")
             loader = PyPDFLoader(pdf_path)
             docs = loader.load()
             fallback_blocks: List[ParagraphBlock] = []
@@ -247,14 +262,30 @@ class AgentRunner:
 
         # Join merged lines
         t = "\n".join(merged_lines)
+        
+        # Protect URLs from OCR repair by temporarily replacing them
+        url_placeholders: List[Tuple[str, str]] = []
+        url_pattern = re.compile(r'https?://[^\s]+', re.IGNORECASE)
+        for idx, match in enumerate(url_pattern.finditer(t)):
+            placeholder = f"__URL_PLACEHOLDER_{idx}__"
+            url_placeholders.append((placeholder, match.group(0)))
+        for placeholder, url in url_placeholders:
+            t = t.replace(url, placeholder, 1)
+        
         # Repair intra-word spaced letters caused by OCR (e.g., 't r o p i c a l i z a t i o n')
+        # Only match sequences of 5+ single letters to avoid false positives
         def _compact_word_sequence(match: re.Match) -> str:
             seq = match.group(0)
             letters = seq.split()
-            if len(letters) >= 4:
+            # Only compact if all parts are single letters
+            if len(letters) >= 5 and all(len(letter) == 1 and letter.isalpha() for letter in letters):
                 return "".join(letters)
             return seq
-        t = re.sub(r"(?:\b\w\b\s+){3,}\w\b", _compact_word_sequence, t)
+        t = re.sub(r"(?:\b[a-zA-Z]\b\s+){4,}[a-zA-Z]\b", _compact_word_sequence, t)
+        
+        # Restore URLs
+        for placeholder, url in url_placeholders:
+            t = t.replace(placeholder, url)
 
         # Now extract sentences and ensure proper separation
         # Split on sentence-ending punctuation (. ! ? ;) followed by whitespace

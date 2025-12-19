@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import logging
 
@@ -52,11 +52,26 @@ async def list_tasks(
     user: dict = Depends(_get_required_user),
 ):
     try:
-        from app.services.mongo_ops import list_user_jobs, list_all_jobs  # type: ignore
+        from app.services.mongo_ops import list_user_jobs, list_all_jobs, get_queue_position  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Listing tasks requires Mongo dependencies (motor/pymongo).")
 
     rows = await (list_all_jobs(limit=limit, status=status) if _is_admin(user) else list_user_jobs(user_id=user["id"], limit=limit, status=status))
+
+    # Collect all pending job IDs to batch-calculate queue positions
+    pending_job_ids = [str(j.get("_id")) for j in rows if j.get("status") == "pending"]
+    queue_positions: Dict[str, int] = {}
+    
+    # Calculate queue positions for all pending jobs
+    for job_id in pending_job_ids:
+        try:
+            pos = await get_queue_position(job_id)
+            if pos is not None:
+                queue_positions[job_id] = pos
+                logger.info(f"Queue position for job {job_id}: {pos}")
+        except Exception as e:
+            logger.error(f"Failed to get queue position for job {job_id}: {e}")
+            pass
 
     def map_row(j: dict) -> dict:
         jid = str(j.get("_id"))
@@ -82,6 +97,9 @@ async def list_tasks(
             "finished_at": finished_at,
             "duration_ms": dur_ms,
         }
+        # Add queue position for pending jobs (visible to all users)
+        if j.get("status") == "pending" and jid in queue_positions:
+            row["queue_position"] = queue_positions[jid]
         # Include creator info for admins to aid triage
         try:
             if _is_admin(user):
@@ -105,6 +123,7 @@ async def get_task_detail(job_id: str, user: dict = Depends(_get_required_user))
             get_job,
             set_job_status,
             append_job_log,
+            get_queue_position,
         )  # type: ignore
     except Exception:
         raise HTTPException(status_code=503, detail="Job status requires Mongo dependencies (motor/pymongo).")
@@ -153,6 +172,14 @@ async def get_task_detail(job_id: str, user: dict = Depends(_get_required_user))
     except Exception:
         dur_ms = None
 
+    # Calculate queue position for pending jobs (visible to all users)
+    queue_position = None
+    if status == "pending":
+        try:
+            queue_position = await get_queue_position(job_id)
+        except Exception:
+            pass
+
     return BatchStatusModel(
         job_id=job_id,
         status=status,
@@ -160,6 +187,7 @@ async def get_task_detail(job_id: str, user: dict = Depends(_get_required_user))
         results=results,
         error=job.get("error"),
         duration_ms=dur_ms,
+        queue_position=queue_position,
     )
 
 

@@ -134,12 +134,35 @@ class AvailabilityEngine:
 
         trimmed_data = data_contexts[: self._max_contexts]
         trimmed_code = code_contexts[: self._max_contexts]
+        
+        # Clean contexts before sending to LLM (remove invisible chars, fix URLs)
+        cleaned_data_contexts = []
+        for ctx in trimmed_data:
+            cleaned_text = self._canonicalize_urls(ctx.text)
+            cleaned_data_contexts.append(RankedContext(
+                label=ctx.label,
+                text=cleaned_text,
+                score=ctx.score,
+                source=ctx.source,
+                index=ctx.index
+            ))
+        
+        cleaned_code_contexts = []
+        for ctx in trimmed_code:
+            cleaned_text = self._canonicalize_urls(ctx.text)
+            cleaned_code_contexts.append(RankedContext(
+                label=ctx.label,
+                text=cleaned_text,
+                score=ctx.score,
+                source=ctx.source,
+                index=ctx.index
+            ))
 
         llm_payload = None
         llm_raw = None
 
-        if trimmed_data or trimmed_code:
-            system_prompt, user_prompt = self._build_prompt(trimmed_data, trimmed_code)
+        if cleaned_data_contexts or cleaned_code_contexts:
+            system_prompt, user_prompt = self._build_prompt(cleaned_data_contexts, cleaned_code_contexts)
             try:
                 llm_raw = chat_fn(system_prompt, user_prompt)
                 llm_payload = self._parse_llm_response(llm_raw)
@@ -150,19 +173,19 @@ class AvailabilityEngine:
         result_data = self._select_result(
             label="data",
             llm_entry=(llm_payload or {}).get("data") if llm_payload else None,
-            contexts=trimmed_data,
+            contexts=cleaned_data_contexts,  # Use cleaned contexts for validation too
         )
         result_code = self._select_result(
             label="code",
             llm_entry=(llm_payload or {}).get("code") if llm_payload else None,
-            contexts=trimmed_code,
+            contexts=cleaned_code_contexts,  # Use cleaned contexts for validation too
         )
 
         diag: Dict[str, object] = {}
         if diagnostics:
             diag = {
-                "data_contexts": [c.text for c in trimmed_data],
-                "code_contexts": [c.text for c in trimmed_code],
+                "data_contexts": [c.text for c in cleaned_data_contexts],
+                "code_contexts": [c.text for c in cleaned_code_contexts],
                 "llm_raw": llm_raw,
                 "llm_payload": llm_payload,
                 "data_fallback": result_data.fallback,
@@ -193,15 +216,44 @@ class AvailabilityEngine:
                 normalized = _normalize_text(block)
                 label = self._infer_heading(normalized)
                 # Inline heading case: "Data availability: ..." -> split once
-                if label in {"data", "code"} and ":" in block.split("\n")[0][:80]:
-                    head, rest = block.split(":", 1)
-                    paragraphs.append(Paragraph(text=_normalize_text(head) + ":", label=label, index=idx))
-                    idx += 1
-                    remainder = rest.strip()
-                    if remainder:
-                        paragraphs.append(Paragraph(text=_normalize_text(remainder), label=None, index=idx))
-                        idx += 1
-                    continue
+                # BUT: make sure we don't split on colons inside URLs (https:// or http://)
+                if label in {"data", "code"}:
+                    # Look for heading pattern like "Data Availability:" at start of line
+                    # Use a more precise check: colon within first 80 chars, but NOT part of a URL
+                    first_line = block.split("\n")[0][:80]
+                    if ":" in first_line:
+                        # Check if this is a heading (colon not part of URL)
+                        # Find first colon that's not part of http:// or https://
+                        colon_pos = -1
+                        for i, ch in enumerate(first_line):
+                            if ch == ':':
+                                # Check if this is part of http:// or https://
+                                if i > 0 and first_line[max(0, i-5):i+3].lower() in ('http://', 'https://'):
+                                    continue
+                                # Found a real heading colon
+                                colon_pos = i
+                                break
+                        
+                        if colon_pos > 0:
+                            # Split on first non-URL colon in the whole block
+                            # Find the same position in the full block
+                            block_colon_pos = block.find(':', 0, 100)  # Search first 100 chars
+                            # Make sure it's not a URL colon
+                            if block_colon_pos > 0:
+                                before_colon = block[max(0, block_colon_pos-5):block_colon_pos].lower()
+                                after_colon = block[block_colon_pos:block_colon_pos+3]
+                                if not (before_colon.endswith(('http', 'https')) or after_colon.startswith('//')):
+                                    # This is a real heading
+                                    head = block[:block_colon_pos]
+                                    rest = block[block_colon_pos+1:]
+                                    paragraphs.append(Paragraph(text=_normalize_text(head) + ":", label=label, index=idx))
+                                    idx += 1
+                                    remainder = rest.strip()
+                                    if remainder:
+                                        paragraphs.append(Paragraph(text=_normalize_text(remainder), label=None, index=idx))
+                                        idx += 1
+                                    continue
+                
                 paragraphs.append(Paragraph(text=normalized, label=label, index=idx))
                 idx += 1
         return paragraphs
@@ -451,12 +503,35 @@ class AvailabilityEngine:
         return repaired.strip()
 
     def _canonicalize_urls(self, text: str) -> str:
+        # Step 0: Remove invisible Unicode characters (zero-width spaces, soft hyphens, etc)
+        # These are common in PDF text extraction artifacts
+        invisible_chars = [
+            '\u200B',  # Zero-width space
+            '\u200C',  # Zero-width non-joiner
+            '\u200D',  # Zero-width joiner
+            '\u00AD',  # Soft hyphen
+            '\uFEFF',  # Zero-width no-break space (BOM)
+        ]
+        for char in invisible_chars:
+            text = text.replace(char, '')
+        
+        # Remove urldefense wrappers (with spaces)
         cleaned = re.sub(
-            r"https?://urldefense\.com/v3/__/?(?P<url>https?://[^\s]+)",
-            lambda m: m.group("url"),
+            r'https?://\s*urlde\s*fense\s*\.\s*com\s*/\s*v3\s*/\s*__\s*/?',
+            '',
             text,
             flags=re.IGNORECASE,
         )
+        
+        # Remove urldefense artifact suffixes like: __;!!N11eV2iwtfs!6catv...
+        # These appear after URLs as: .git__;!!randomchars$ 
+        # Stop before common words
+        cleaned = re.sub(
+            r'(__\s*;?\s*!!\s*[A-Za-z0-9!$\-_\s+/=]+?)(\s+(?:and|the|on|at|in|from|or|to|is|are)\b|$)',
+            r'\2',  # Keep only the trailing word/space
+            cleaned
+        )
+        
         # Fix intra-domain spacing like "zenod o", "git lab"
         fixed_domains = [
             (r"z\s*e\s*n\s*o\s*d\s*o", "zenodo"),
@@ -467,8 +542,10 @@ class AvailabilityEngine:
         ]
         for pat, rep in fixed_domains:
             cleaned = re.sub(pat, rep, cleaned, flags=re.IGNORECASE)
+        
+        # Merge URL fragments
         pattern = re.compile(r"(https?://[^\s]+)\s+([^\s])")
-        while True:
+        for _ in range(10):  # Limit iterations
             def repl(match: re.Match[str]) -> str:
                 follower = match.group(2)
                 tail = match.string[match.end(0) : match.end(0) + 12]
@@ -484,6 +561,7 @@ class AvailabilityEngine:
             if updated == cleaned:
                 break
             cleaned = updated
+        
         return cleaned
 
     def _filter_links(self, context_text: str, links: Iterable[object], *, label: str) -> List[str]:

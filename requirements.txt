@@ -5,7 +5,7 @@ ollama==0.1.7
 pypdf==4.0.1
 pdfplumber>=0.10.3
 pymupdf>=1.23.0  # Fast PDF text extraction for clean PDFs
-pydantic>=2.5.0
+pydantic>=2.5.0,<3.0
 requests==2.31.0
 
 # FastAPI backend
